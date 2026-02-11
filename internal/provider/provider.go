@@ -102,7 +102,9 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 }
 
 func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return []func() resource.Resource{
+		NewWebhookEndpointResource,
+	}
 }
 
 func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
