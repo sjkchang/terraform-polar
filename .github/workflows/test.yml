@@ -78,5 +78,6 @@ jobs:
       - run: go mod download
       - env:
           TF_ACC: "1"
+          POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
         run: go test -v -cover ./internal/provider/
         timeout-minutes: 10
