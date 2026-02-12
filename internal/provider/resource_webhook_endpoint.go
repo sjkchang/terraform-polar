@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -37,15 +36,12 @@ type WebhookEndpointResource struct {
 }
 
 type WebhookEndpointResourceModel struct {
-	ID             types.String `tfsdk:"id"`
-	URL            types.String `tfsdk:"url"`
-	Format         types.String `tfsdk:"format"`
-	Events         types.Set    `tfsdk:"events"`
-	Secret         types.String `tfsdk:"secret"`
-	Enabled        types.Bool   `tfsdk:"enabled"`
-	OrganizationID types.String `tfsdk:"organization_id"`
-	CreatedAt      types.String `tfsdk:"created_at"`
-	ModifiedAt     types.String `tfsdk:"modified_at"`
+	ID      types.String `tfsdk:"id"`
+	URL     types.String `tfsdk:"url"`
+	Format  types.String `tfsdk:"format"`
+	Events  types.Set    `tfsdk:"events"`
+	Secret  types.String `tfsdk:"secret"`
+	Enabled types.Bool   `tfsdk:"enabled"`
 }
 
 func (r *WebhookEndpointResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -93,24 +89,6 @@ func (r *WebhookEndpointResource) Schema(ctx context.Context, req resource.Schem
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
-			},
-			"organization_id": schema.StringAttribute{
-				MarkdownDescription: "The organization ID that owns this webhook endpoint.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"created_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the webhook endpoint was created.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"modified_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the webhook endpoint was last modified.",
-				Computed:            true,
 			},
 		},
 	}
@@ -304,14 +282,6 @@ func (r *WebhookEndpointResource) mapResponseToState(ctx context.Context, endpoi
 	data.Format = types.StringValue(string(endpoint.Format))
 	data.Secret = types.StringValue(endpoint.Secret)
 	data.Enabled = types.BoolValue(endpoint.Enabled)
-	data.OrganizationID = types.StringValue(endpoint.OrganizationID)
-	data.CreatedAt = types.StringValue(endpoint.CreatedAt.Format(time.RFC3339))
-
-	if endpoint.ModifiedAt != nil {
-		data.ModifiedAt = types.StringValue(endpoint.ModifiedAt.Format(time.RFC3339))
-	} else {
-		data.ModifiedAt = types.StringNull()
-	}
 
 	// Convert events to Terraform set
 	eventValues := make([]attr.Value, len(endpoint.Events))

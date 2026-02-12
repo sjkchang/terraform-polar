@@ -36,12 +36,7 @@ type BenefitResourceModel struct {
 	ID                         types.String                            `tfsdk:"id"`
 	Type                       types.String                            `tfsdk:"type"`
 	Description                types.String                            `tfsdk:"description"`
-	OrganizationID             types.String                            `tfsdk:"organization_id"`
 	Metadata                   types.Map                               `tfsdk:"metadata"`
-	Selectable                 types.Bool                              `tfsdk:"selectable"`
-	Deletable                  types.Bool                              `tfsdk:"deletable"`
-	CreatedAt                  types.String                            `tfsdk:"created_at"`
-	ModifiedAt                 types.String                            `tfsdk:"modified_at"`
 	CustomProperties           *BenefitCustomPropertiesModel           `tfsdk:"custom_properties"`
 	DiscordProperties          *BenefitDiscordPropertiesModel          `tfsdk:"discord_properties"`
 	GitHubRepositoryProperties *BenefitGitHubRepositoryPropertiesModel `tfsdk:"github_repository_properties"`
@@ -126,36 +121,10 @@ func (r *BenefitResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "The description of the benefit. Displayed on products having this benefit.",
 				Required:            true,
 			},
-			"organization_id": schema.StringAttribute{
-				MarkdownDescription: "The organization ID that owns this benefit.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"metadata": schema.MapAttribute{
 				MarkdownDescription: "Key-value metadata.",
 				Optional:            true,
 				ElementType:         types.StringType,
-			},
-			"selectable": schema.BoolAttribute{
-				MarkdownDescription: "Whether the benefit is selectable when creating a product.",
-				Computed:            true,
-			},
-			"deletable": schema.BoolAttribute{
-				MarkdownDescription: "Whether the benefit can be deleted.",
-				Computed:            true,
-			},
-			"created_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the benefit was created.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"modified_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the benefit was last modified.",
-				Computed:            true,
 			},
 
 			// Type-specific properties (exactly one should match the type)

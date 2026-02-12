@@ -89,18 +89,6 @@ func (d *MeterDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				Computed:            true,
 				ElementType:         types.StringType,
 			},
-			"organization_id": schema.StringAttribute{
-				MarkdownDescription: "The organization ID that owns this meter.",
-				Computed:            true,
-			},
-			"created_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the meter was created.",
-				Computed:            true,
-			},
-			"modified_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the meter was last modified.",
-				Computed:            true,
-			},
 		},
 	}
 }

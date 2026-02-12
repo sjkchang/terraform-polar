@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -37,14 +36,11 @@ type MeterResource struct {
 // Model types shared between meter resource and data source.
 
 type MeterResourceModel struct {
-	ID             types.String      `tfsdk:"id"`
-	Name           types.String      `tfsdk:"name"`
-	Filter         *FilterModel      `tfsdk:"filter"`
-	Aggregation    *AggregationModel `tfsdk:"aggregation"`
-	Metadata       types.Map         `tfsdk:"metadata"`
-	OrganizationID types.String      `tfsdk:"organization_id"`
-	CreatedAt      types.String      `tfsdk:"created_at"`
-	ModifiedAt     types.String      `tfsdk:"modified_at"`
+	ID          types.String      `tfsdk:"id"`
+	Name        types.String      `tfsdk:"name"`
+	Filter      *FilterModel      `tfsdk:"filter"`
+	Aggregation *AggregationModel `tfsdk:"aggregation"`
+	Metadata    types.Map         `tfsdk:"metadata"`
 }
 
 type FilterModel struct {
@@ -140,24 +136,6 @@ func (r *MeterResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Key-value metadata.",
 				Optional:            true,
 				ElementType:         types.StringType,
-			},
-			"organization_id": schema.StringAttribute{
-				MarkdownDescription: "The organization ID that owns this meter.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"created_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the meter was created.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"modified_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the meter was last modified.",
-				Computed:            true,
 			},
 		},
 	}
@@ -332,15 +310,6 @@ func (r *MeterResource) ImportState(ctx context.Context, req resource.ImportStat
 func mapMeterResponseToState(ctx context.Context, meter *components.Meter, data *MeterResourceModel, diags *diag.Diagnostics) {
 	data.ID = types.StringValue(meter.ID)
 	data.Name = types.StringValue(meter.Name)
-	data.OrganizationID = types.StringValue(meter.OrganizationID)
-	data.CreatedAt = types.StringValue(meter.CreatedAt.Format(time.RFC3339))
-
-	if meter.ModifiedAt != nil {
-		data.ModifiedAt = types.StringValue(meter.ModifiedAt.Format(time.RFC3339))
-	} else {
-		data.ModifiedAt = types.StringNull()
-	}
-
 	data.Filter = sdkFilterToModel(meter.Filter)
 	data.Aggregation = sdkAggregationToModel(meter.Aggregation)
 

@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	polargo "github.com/polarsource/polar-go"
+	"github.com/polarsource/polar-go/retry"
 )
 
 // Ensure PolarProvider satisfies the provider interface.
@@ -94,6 +95,18 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	}
 	opts = append(opts, polargo.WithServer(server))
 
+	// Retry on 429/5xx with exponential backoff
+	opts = append(opts, polargo.WithRetryConfig(retry.Config{
+		Strategy: "backoff",
+		Backoff: &retry.BackoffStrategy{
+			InitialInterval: 500,
+			MaxInterval:     30000,
+			Exponent:        1.5,
+			MaxElapsedTime:  120000,
+		},
+		RetryConnectionErrors: false,
+	}))
+
 	client := polargo.New(opts...)
 
 	// Make the Polar client available to resources and data sources
@@ -106,6 +119,7 @@ func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resourc
 		NewWebhookEndpointResource,
 		NewMeterResource,
 		NewBenefitResource,
+		NewProductResource,
 	}
 }
 
@@ -113,6 +127,7 @@ func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.Dat
 	return []func() datasource.DataSource{
 		NewMeterDataSource,
 		NewBenefitDataSource,
+		NewProductDataSource,
 	}
 }
 

@@ -44,30 +44,10 @@ func (d *BenefitDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 				MarkdownDescription: "The description of the benefit.",
 				Computed:            true,
 			},
-			"organization_id": schema.StringAttribute{
-				MarkdownDescription: "The organization ID that owns this benefit.",
-				Computed:            true,
-			},
 			"metadata": schema.MapAttribute{
 				MarkdownDescription: "Key-value metadata.",
 				Computed:            true,
 				ElementType:         types.StringType,
-			},
-			"selectable": schema.BoolAttribute{
-				MarkdownDescription: "Whether the benefit is selectable when creating a product.",
-				Computed:            true,
-			},
-			"deletable": schema.BoolAttribute{
-				MarkdownDescription: "Whether the benefit can be deleted.",
-				Computed:            true,
-			},
-			"created_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the benefit was created.",
-				Computed:            true,
-			},
-			"modified_at": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when the benefit was last modified.",
-				Computed:            true,
 			},
 
 			// Type-specific properties (populated based on the benefit type)

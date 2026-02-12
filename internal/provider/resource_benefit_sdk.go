@@ -5,7 +5,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -337,7 +336,7 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 	switch {
 	case benefit.BenefitCustom != nil:
 		b := benefit.BenefitCustom
-		setBenefitCommonFields(b.ID, "custom", b.Description, b.OrganizationID, b.Selectable, b.Deletable, b.CreatedAt, b.ModifiedAt, data)
+		setBenefitCommonFields(b.ID, "custom", b.Description, data)
 		data.CustomProperties = &BenefitCustomPropertiesModel{
 			Note: optionalStringValue(b.Properties.Note),
 		}
@@ -347,7 +346,7 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 
 	case benefit.BenefitDiscord != nil:
 		b := benefit.BenefitDiscord
-		setBenefitCommonFields(b.ID, "discord", b.Description, b.OrganizationID, b.Selectable, b.Deletable, b.CreatedAt, b.ModifiedAt, data)
+		setBenefitCommonFields(b.ID, "discord", b.Description, data)
 		data.DiscordProperties = &BenefitDiscordPropertiesModel{
 			GuildToken: types.StringValue(b.Properties.GuildToken),
 			RoleID:     types.StringValue(b.Properties.RoleID),
@@ -360,7 +359,7 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 
 	case benefit.BenefitGitHubRepository != nil:
 		b := benefit.BenefitGitHubRepository
-		setBenefitCommonFields(b.ID, "github_repository", b.Description, b.OrganizationID, b.Selectable, b.Deletable, b.CreatedAt, b.ModifiedAt, data)
+		setBenefitCommonFields(b.ID, "github_repository", b.Description, data)
 		data.GitHubRepositoryProperties = &BenefitGitHubRepositoryPropertiesModel{
 			RepositoryOwner: types.StringValue(b.Properties.RepositoryOwner),
 			RepositoryName:  types.StringValue(b.Properties.RepositoryName),
@@ -372,7 +371,7 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 
 	case benefit.BenefitDownloadables != nil:
 		b := benefit.BenefitDownloadables
-		setBenefitCommonFields(b.ID, "downloadables", b.Description, b.OrganizationID, b.Selectable, b.Deletable, b.CreatedAt, b.ModifiedAt, data)
+		setBenefitCommonFields(b.ID, "downloadables", b.Description, data)
 		filesList, d := types.ListValueFrom(ctx, types.StringType, b.Properties.Files)
 		diags.Append(d...)
 		data.DownloadablesProperties = &BenefitDownloadablesPropertiesModel{
@@ -384,7 +383,7 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 
 	case benefit.BenefitLicenseKeys != nil:
 		b := benefit.BenefitLicenseKeys
-		setBenefitCommonFields(b.ID, "license_keys", b.Description, b.OrganizationID, b.Selectable, b.Deletable, b.CreatedAt, b.ModifiedAt, data)
+		setBenefitCommonFields(b.ID, "license_keys", b.Description, data)
 		data.LicenseKeysProperties = sdkLicenseKeysPropsToModel(&b.Properties)
 		data.Metadata = sdkMetadataToMap(ctx, b.Metadata, func(v components.BenefitLicenseKeysMetadata) metadataFields {
 			return metadataFields{Str: v.Str, Integer: v.Integer, Number: v.Number, Boolean: v.Boolean}
@@ -392,7 +391,7 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 
 	case benefit.BenefitMeterCredit != nil:
 		b := benefit.BenefitMeterCredit
-		setBenefitCommonFields(b.ID, "meter_credit", b.Description, b.OrganizationID, b.Selectable, b.Deletable, b.CreatedAt, b.ModifiedAt, data)
+		setBenefitCommonFields(b.ID, "meter_credit", b.Description, data)
 		data.MeterCreditProperties = &BenefitMeterCreditPropertiesModel{
 			MeterID:  types.StringValue(b.Properties.MeterID),
 			Units:    types.Int64Value(b.Properties.Units),
@@ -409,19 +408,10 @@ func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit,
 
 // --- Shared helpers ---
 
-func setBenefitCommonFields(id, benefitType, description, orgID string, selectable, deletable bool, createdAt time.Time, modifiedAt *time.Time, data *BenefitResourceModel) {
+func setBenefitCommonFields(id, benefitType, description string, data *BenefitResourceModel) {
 	data.ID = types.StringValue(id)
 	data.Type = types.StringValue(benefitType)
 	data.Description = types.StringValue(description)
-	data.OrganizationID = types.StringValue(orgID)
-	data.Selectable = types.BoolValue(selectable)
-	data.Deletable = types.BoolValue(deletable)
-	data.CreatedAt = types.StringValue(createdAt.Format(time.RFC3339))
-	if modifiedAt != nil {
-		data.ModifiedAt = types.StringValue(modifiedAt.Format(time.RFC3339))
-	} else {
-		data.ModifiedAt = types.StringNull()
-	}
 }
 
 func optionalStringValue(s *string) types.String {
