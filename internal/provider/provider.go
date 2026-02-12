@@ -105,12 +105,14 @@ func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resourc
 	return []func() resource.Resource{
 		NewWebhookEndpointResource,
 		NewMeterResource,
+		NewBenefitResource,
 	}
 }
 
 func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewMeterDataSource,
+		NewBenefitDataSource,
 	}
 }
 
