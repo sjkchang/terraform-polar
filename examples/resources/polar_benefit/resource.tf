@@ -30,7 +30,7 @@ resource "polar_benefit" "software_license" {
     limit_usage = 3
 
     activations = {
-      limit               = 5
+      limit                 = 5
       enable_customer_admin = true
     }
   }

@@ -1,23 +1,98 @@
-# Terraform Provider Scaffolding (Terraform Plugin Framework)
+# Terraform Provider for Polar
 
-_This template repository is built on the [Terraform Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework). The template repository built on the [Terraform Plugin SDK](https://github.com/hashicorp/terraform-plugin-sdk) can be found at [terraform-provider-scaffolding](https://github.com/hashicorp/terraform-provider-scaffolding). See [Which SDK Should I Use?](https://developer.hashicorp.com/terraform/plugin/framework-benefits) in the Terraform documentation for additional information._
-
-This repository is a *template* for a [Terraform](https://www.terraform.io) provider. It is intended as a starting point for creating Terraform providers, containing:
-
-- A resource and a data source (`internal/provider/`),
-- Examples (`examples/`) and generated documentation (`docs/`),
-- Miscellaneous meta files.
-
-These files contain boilerplate code that you will need to edit to create your own Terraform provider. Tutorials for creating Terraform providers can be found on the [HashiCorp Developer](https://developer.hashicorp.com/terraform/tutorials/providers-plugin-framework) platform. _Terraform Plugin Framework specific guides are titled accordingly._
-
-Please see the [GitHub template repository documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template) for how to create a new repository from this template on GitHub.
-
-Once you've written your provider, you'll want to [publish it on the Terraform Registry](https://developer.hashicorp.com/terraform/registry/providers/publishing) so that others can use it.
+The Polar provider enables [Terraform](https://www.terraform.io) to manage [Polar.sh](https://polar.sh) resources such as products, meters, benefits, and webhook endpoints.
 
 ## Requirements
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
-- [Go](https://golang.org/doc/install) >= 1.24
+- [Go](https://golang.org/doc/install) >= 1.24 (to build the provider)
+
+## Installation
+
+The provider is available on the [Terraform Registry](https://registry.terraform.io/providers/sjkchang/polar/latest). Terraform will automatically download it when you run `terraform init`:
+
+```hcl
+terraform {
+  required_providers {
+    polar = {
+      source  = "sjkchang/polar"
+      version = "~> 0.1"
+    }
+  }
+}
+```
+
+## Authentication
+
+The provider requires a Polar organization access token. You can provide it via the `access_token` attribute or the `POLAR_ACCESS_TOKEN` environment variable:
+
+```hcl
+provider "polar" {
+  # Reads from POLAR_ACCESS_TOKEN env var by default
+  # access_token = "polar_oat_xxx"
+
+  # Defaults to sandbox. Set to "production" for live environment.
+  # server = "production"
+}
+```
+
+## Resources
+
+- **polar_product** — Manage products with fixed, free, custom, metered, or seat-based pricing
+- **polar_meter** — Track usage events with configurable filters and aggregations
+- **polar_benefit** — Define benefits like custom perks, license keys, meter credits, Discord roles, GitHub repo access, and downloadables
+- **polar_webhook_endpoint** — Configure webhook endpoints for event notifications
+
+## Data Sources
+
+- **polar_product** — Fetch an existing product by ID
+- **polar_meter** — Fetch an existing meter by ID
+- **polar_benefit** — Fetch an existing benefit by ID
+
+## Example Usage
+
+```hcl
+# Create a meter to track API calls
+resource "polar_meter" "api_calls" {
+  name = "API Calls"
+
+  filter = {
+    conjunction = "and"
+    clauses = [{
+      property = "name"
+      operator = "eq"
+      value    = "api_call"
+    }]
+  }
+
+  aggregation = {
+    func = "count"
+  }
+}
+
+# Create a monthly subscription product with metered pricing
+resource "polar_product" "api_access" {
+  name               = "API Access"
+  description        = "Pay per API call."
+  recurring_interval = "month"
+
+  prices = [{
+    amount_type = "metered_unit"
+    meter_id    = polar_meter.api_calls.id
+    unit_amount = "0.01"
+    cap_amount  = 50000
+  }]
+}
+
+# Set up a webhook to receive order notifications
+resource "polar_webhook_endpoint" "orders" {
+  url    = "https://example.com/webhooks/polar"
+  format = "raw"
+  events = ["order.created", "order.paid"]
+}
+```
+
+See the [examples](examples/) directory and [provider documentation](docs/) for more.
 
 ## Building The Provider
 
@@ -42,10 +117,6 @@ go mod tidy
 ```
 
 Then commit the changes to `go.mod` and `go.sum`.
-
-## Using the provider
-
-Fill this in for each provider
 
 ## Developing the Provider
 
