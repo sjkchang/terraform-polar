@@ -57,7 +57,7 @@ resource "polar_benefit" "software_license" {
 
 ### Required
 
-- `description` (String) The description of the benefit. Displayed on products having this benefit.
+- `description` (String) The description of the benefit. Displayed on products having this benefit. Maximum 42 characters.
 - `type` (String) The benefit type. Changing this forces a new resource. Must be one of: `custom`, `discord`, `github_repository`, `downloadables`, `license_keys`, `meter_credit`.
 
 ### Optional

@@ -4,6 +4,7 @@ package provider
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -188,6 +189,18 @@ func TestAccBenefitResource_licenseKeys(t *testing.T) {
 						knownvalue.StringExact("TFUPD"),
 					),
 				},
+			},
+		},
+	})
+}
+
+func TestBenefitResource_descriptionValidation(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccBenefitCustomConfigNoNote("This description is way too long and exceeds the limit"),
+				ExpectError: regexp.MustCompile(`string length must be at most 42`),
 			},
 		},
 	})

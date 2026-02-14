@@ -118,8 +118,11 @@ func (r *BenefitResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"description": schema.StringAttribute{
-				MarkdownDescription: "The description of the benefit. Displayed on products having this benefit.",
+				MarkdownDescription: "The description of the benefit. Displayed on products having this benefit. Maximum 42 characters.",
 				Required:            true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(42),
+				},
 			},
 			"metadata": schema.MapAttribute{
 				MarkdownDescription: "Key-value metadata.",
