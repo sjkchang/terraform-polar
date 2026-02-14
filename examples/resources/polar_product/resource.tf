@@ -60,25 +60,3 @@ resource "polar_product" "api_access" {
     cap_amount  = 50000
   }]
 }
-
-# Seat-based subscription with tiered pricing
-resource "polar_product" "team_plan" {
-  name               = "Team Plan"
-  description        = "Per-seat pricing with volume discounts."
-  recurring_interval = "month"
-
-  prices = [{
-    amount_type = "seat_based"
-    seat_tiers = [
-      {
-        min_seats      = 1
-        max_seats      = 10
-        price_per_seat = 1500
-      },
-      {
-        min_seats      = 11
-        price_per_seat = 1200
-      }
-    ]
-  }]
-}

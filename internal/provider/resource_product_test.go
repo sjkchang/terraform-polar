@@ -262,36 +262,6 @@ func TestAccProductResource_meteredUnit(t *testing.T) {
 	})
 }
 
-func TestAccProductResource_seatBased(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccProductSeatBasedConfig("tf-acc-test-product-seats"),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"polar_product.test",
-						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-seats"),
-					),
-	statecheck.ExpectKnownValue(
-						"polar_product.test",
-						tfjsonpath.New("prices").AtSliceIndex(0).AtMapKey("amount_type"),
-						knownvalue.StringExact("seat_based"),
-					),
-				},
-			},
-			// ImportState
-			{
-				ResourceName:      "polar_product.test",
-				ImportState:        true,
-				ImportStateVerify:  true,
-			},
-		},
-	})
-}
-
 // --- Config helpers ---
 
 func testAccProductOneTimeFixedConfig(name string, priceAmount int64) string {
@@ -393,30 +363,6 @@ resource "polar_product" "test" {
   }]
 }
 `, name, unitAmount, capAmount)
-}
-
-func testAccProductSeatBasedConfig(name string) string {
-	return fmt.Sprintf(`
-resource "polar_product" "test" {
-  name               = %q
-  recurring_interval = "month"
-
-  prices = [{
-    amount_type = "seat_based"
-    seat_tiers = [
-      {
-        min_seats      = 1
-        max_seats      = 10
-        price_per_seat = 1000
-      },
-      {
-        min_seats      = 11
-        price_per_seat = 800
-      }
-    ]
-  }]
-}
-`, name)
 }
 
 func testAccProductWithMetadataConfig(name, metadata string) string {

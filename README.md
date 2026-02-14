@@ -38,7 +38,7 @@ provider "polar" {
 
 ## Resources
 
-- **polar_product** — Manage products with fixed, free, custom, metered, or seat-based pricing
+- **polar_product** — Manage products with fixed, free, custom, and metered pricing
 - **polar_meter** — Track usage events with configurable filters and aggregations
 - **polar_benefit** — Define benefits like custom perks, license keys, meter credits, Discord roles, GitHub repo access, and downloadables
 - **polar_webhook_endpoint** — Configure webhook endpoints for event notifications

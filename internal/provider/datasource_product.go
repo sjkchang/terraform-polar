@@ -89,26 +89,6 @@ func (d *ProductDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 							MarkdownDescription: "Maximum charge in cents (metered_unit type).",
 							Computed:            true,
 						},
-						"seat_tiers": schema.ListNestedAttribute{
-							MarkdownDescription: "Pricing tiers (seat_based type).",
-							Computed:            true,
-							NestedObject: schema.NestedAttributeObject{
-								Attributes: map[string]schema.Attribute{
-									"min_seats": schema.Int64Attribute{
-										MarkdownDescription: "Minimum number of seats for this tier.",
-										Computed:            true,
-									},
-									"max_seats": schema.Int64Attribute{
-										MarkdownDescription: "Maximum number of seats for this tier.",
-										Computed:            true,
-									},
-									"price_per_seat": schema.Int64Attribute{
-										MarkdownDescription: "Price per seat in cents.",
-										Computed:            true,
-									},
-								},
-							},
-						},
 					},
 				},
 			},

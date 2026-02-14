@@ -219,25 +219,6 @@ func buildMeteredUnitPriceCreate(p PriceModel) components.ProductPriceMeteredUni
 	return create
 }
 
-func buildSeatBasedPriceCreate(p PriceModel) components.ProductPriceSeatBasedCreate {
-	tiers := make([]components.ProductPriceSeatTier, len(p.SeatTiers))
-	for i, t := range p.SeatTiers {
-		tier := components.ProductPriceSeatTier{
-			MinSeats:     t.MinSeats.ValueInt64(),
-			PricePerSeat: t.PricePerSeat.ValueInt64(),
-		}
-		if !t.MaxSeats.IsNull() {
-			v := t.MaxSeats.ValueInt64()
-			tier.MaxSeats = &v
-		}
-		tiers[i] = tier
-	}
-	return components.ProductPriceSeatBasedCreate{
-		PriceCurrency: optionalCurrency(p),
-		SeatTiers:     components.ProductPriceSeatTiers{Tiers: tiers},
-	}
-}
-
 func pricesToRecurringCreateSDK(prices []PriceModel) ([]components.ProductCreateRecurringPrices, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	result := make([]components.ProductCreateRecurringPrices, len(prices))
@@ -251,10 +232,8 @@ func pricesToRecurringCreateSDK(prices []PriceModel) ([]components.ProductCreate
 			result[i] = components.CreateProductCreateRecurringPricesCustom(buildCustomPriceCreate(p))
 		case "metered_unit":
 			result[i] = components.CreateProductCreateRecurringPricesMeteredUnit(buildMeteredUnitPriceCreate(p))
-		case "seat_based":
-			result[i] = components.CreateProductCreateRecurringPricesSeatBased(buildSeatBasedPriceCreate(p))
 		default:
-			diags.AddError("Unsupported price type", "Price amount_type must be one of: fixed, free, custom, metered_unit, seat_based.")
+			diags.AddError("Unsupported price type", "Price amount_type must be one of: fixed, free, custom, metered_unit.")
 			return nil, diags
 		}
 	}
@@ -274,10 +253,8 @@ func pricesToOneTimeCreateSDK(prices []PriceModel) ([]components.ProductCreateOn
 			result[i] = components.CreateProductCreateOneTimePricesCustom(buildCustomPriceCreate(p))
 		case "metered_unit":
 			result[i] = components.CreateProductCreateOneTimePricesMeteredUnit(buildMeteredUnitPriceCreate(p))
-		case "seat_based":
-			result[i] = components.CreateProductCreateOneTimePricesSeatBased(buildSeatBasedPriceCreate(p))
 		default:
-			diags.AddError("Unsupported price type", "Price amount_type must be one of: fixed, free, custom, metered_unit, seat_based.")
+			diags.AddError("Unsupported price type", "Price amount_type must be one of: fixed, free, custom, metered_unit.")
 			return nil, diags
 		}
 	}
@@ -314,8 +291,6 @@ func extractExistingPrices(apiPrices []components.Prices) []*existingPrice {
 			id = p.ProductPrice.ProductPriceCustom.ID
 		case p.ProductPrice.ProductPriceMeteredUnit != nil:
 			id = p.ProductPrice.ProductPriceMeteredUnit.ID
-		case p.ProductPrice.ProductPriceSeatBased != nil:
-			id = p.ProductPrice.ProductPriceSeatBased.ID
 		}
 		result = append(result, &existingPrice{id: id, data: *model})
 	}
@@ -351,19 +326,6 @@ func pricesMatch(planned, existing PriceModel) bool {
 			return false
 		}
 		return optionalInt64Equal(planned.CapAmount, existing.CapAmount)
-	case "seat_based":
-		if len(planned.SeatTiers) != len(existing.SeatTiers) {
-			return false
-		}
-		for j := range planned.SeatTiers {
-			pt, et := planned.SeatTiers[j], existing.SeatTiers[j]
-			if pt.MinSeats.ValueInt64() != et.MinSeats.ValueInt64() ||
-				pt.PricePerSeat.ValueInt64() != et.PricePerSeat.ValueInt64() ||
-				!optionalInt64Equal(pt.MaxSeats, et.MaxSeats) {
-				return false
-			}
-		}
-		return true
 	}
 	return false
 }
@@ -418,12 +380,8 @@ func pricesToUpdateSDK(planned []PriceModel, currentPrices []components.Prices) 
 			result[i] = components.CreateProductUpdatePricesTwo(
 				components.CreateTwoMeteredUnit(buildMeteredUnitPriceCreate(p)),
 			)
-		case "seat_based":
-			result[i] = components.CreateProductUpdatePricesTwo(
-				components.CreateTwoSeatBased(buildSeatBasedPriceCreate(p)),
-			)
 		default:
-			diags.AddError("Unsupported price type", "Price amount_type must be one of: fixed, free, custom, metered_unit, seat_based.")
+			diags.AddError("Unsupported price type", "Price amount_type must be one of: fixed, free, custom, metered_unit.")
 			return nil, diags
 		}
 	}
@@ -456,7 +414,6 @@ func nullPriceModel(amountType string, currency types.String) PriceModel {
 		MeterID:       types.StringNull(),
 		UnitAmount:    types.StringNull(),
 		CapAmount:     types.Int64Null(),
-		SeatTiers:     nil,
 	}
 }
 
@@ -486,20 +443,6 @@ func sdkProductPriceToModel(price *components.ProductPrice) *PriceModel {
 		m.MeterID = types.StringValue(pp.MeterID)
 		m.UnitAmount = types.StringValue(normalizeDecimalString(pp.UnitAmount))
 		m.CapAmount = optionalInt64Value(pp.CapAmount)
-		return &m
-
-	case price.ProductPriceSeatBased != nil:
-		pp := price.ProductPriceSeatBased
-		m := nullPriceModel("seat_based", types.StringValue(pp.PriceCurrency))
-		tiers := make([]SeatTierModel, len(pp.SeatTiers.Tiers))
-		for i, t := range pp.SeatTiers.Tiers {
-			tiers[i] = SeatTierModel{
-				MinSeats:     types.Int64Value(t.MinSeats),
-				MaxSeats:     optionalInt64Value(t.MaxSeats),
-				PricePerSeat: types.Int64Value(t.PricePerSeat),
-			}
-		}
-		m.SeatTiers = tiers
 		return &m
 
 	default:
