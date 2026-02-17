@@ -4,6 +4,7 @@ package provider
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -93,6 +94,18 @@ func TestAccWebhookEndpointResource_disabled(t *testing.T) {
 						knownvalue.Bool(true),
 					),
 				},
+			},
+		},
+	})
+}
+
+func TestWebhookEndpointResource_rejectsHTTP(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccWebhookEndpointConfig("http://example.com/webhook", "raw", `["order.created"]`),
+				ExpectError: regexp.MustCompile(`webhook URL must use HTTPS`),
 			},
 		},
 	})

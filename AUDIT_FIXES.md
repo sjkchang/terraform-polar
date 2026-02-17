@@ -53,11 +53,12 @@ Audit performed 2026-02-16 against commit `905974e`.
   Error is silently dropped, resulting in empty error messages on body-read failure.
   (Fixed as part of P0 `doWithRetry` rework.)
 
-- [ ] **Add missing test coverage**
-  - Benefit data source tests
-  - Error-path tests (API 500, partial failures)
-  - Archived product import test
-  - State drift detection tests
+- [x] **Add missing test coverage** (partial)
+  - [x] Benefit data source acceptance tests (custom + license_keys types)
+  - [x] Webhook HTTPS validation unit test
+  - [x] Product SDK unit tests (numericStringsEqual, normalizeDecimalString, preserveUnitAmountFormatting)
+  - [ ] Error-path tests (API 500, partial failures) — requires mock server
+  - [ ] State drift detection tests — requires mock server
 
 ## P3 — Low Priority
 
