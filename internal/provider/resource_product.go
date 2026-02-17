@@ -5,7 +5,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -41,6 +40,7 @@ type ProductResourceModel struct {
 	Description       types.String `tfsdk:"description"`
 	RecurringInterval types.String `tfsdk:"recurring_interval"`
 	Prices            []PriceModel `tfsdk:"prices"`
+	BenefitIDs        types.Set    `tfsdk:"benefit_ids"`
 	Metadata          types.Map    `tfsdk:"metadata"`
 	Medias            types.List   `tfsdk:"medias"`
 	IsArchived        types.Bool   `tfsdk:"is_archived"`
@@ -163,6 +163,11 @@ func (r *ProductResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Optional:            true,
 				ElementType:         types.StringType,
 			},
+			"benefit_ids": schema.SetAttribute{
+				MarkdownDescription: "Set of benefit IDs to attach to this product. Uses replace-all semantics — the full set is sent on every apply. Omit to leave benefits unmanaged by Terraform.",
+				Optional:            true,
+				ElementType:         types.StringType,
+			},
 			"is_archived": schema.BoolAttribute{
 				MarkdownDescription: "Whether the product is archived. Defaults to `false`. Set to `true` to archive a product while keeping it in Terraform state.",
 				Optional:            true,
@@ -216,7 +221,31 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		"id": result.Product.ID,
 	})
 
-	product, err := r.waitForVisible(ctx, result.Product.ID)
+	// Update benefits if configured
+	if !data.BenefitIDs.IsNull() {
+		benefitIDs := extractBenefitIDsFromSet(ctx, data.BenefitIDs, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		_, err := r.client.Products.UpdateBenefits(ctx, result.Product.ID, components.ProductBenefitsUpdate{
+			Benefits: benefitIDs,
+		})
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating product benefits",
+				fmt.Sprintf("Could not update benefits for product %s: %s", result.Product.ID, err),
+			)
+			return
+		}
+	}
+
+	product, err := pollForVisibility(ctx, "product", result.Product.ID, func() (*components.Product, error) {
+		r, err := r.client.Products.Get(ctx, result.Product.ID)
+		if err != nil {
+			return nil, err
+		}
+		return r.Product, nil
+	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for product visibility",
@@ -294,11 +323,36 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	product, err := r.waitForVisible(ctx, data.ID.ValueString())
+	// Update benefits if configured
+	if !data.BenefitIDs.IsNull() {
+		benefitIDs := extractBenefitIDsFromSet(ctx, data.BenefitIDs, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		_, err := r.client.Products.UpdateBenefits(ctx, data.ID.ValueString(), components.ProductBenefitsUpdate{
+			Benefits: benefitIDs,
+		})
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating product benefits",
+				fmt.Sprintf("Could not update benefits for product %s: %s", data.ID.ValueString(), err),
+			)
+			return
+		}
+	}
+
+	productID := data.ID.ValueString()
+	product, err := pollForVisibility(ctx, "product", productID, func() (*components.Product, error) {
+		r, err := r.client.Products.Get(ctx, productID)
+		if err != nil {
+			return nil, err
+		}
+		return r.Product, nil
+	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for product visibility",
-			fmt.Sprintf("Product %s was updated but not immediately readable: %s", data.ID.ValueString(), err),
+			fmt.Sprintf("Product %s was updated but not immediately readable: %s", productID, err),
 		)
 		return
 	}
@@ -340,27 +394,3 @@ func (r *ProductResource) Delete(ctx context.Context, req resource.DeleteRequest
 func (r *ProductResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
-
-// waitForVisible polls Products.Get until the product is readable,
-// handling eventual consistency after writes. Unlike the organization resource's
-// waitForReadConsistency (which checks field values), this only confirms the
-// resource is visible to subsequent reads — sufficient since products are written
-// and read back atomically by the API.
-func (r *ProductResource) waitForVisible(ctx context.Context, id string) (*components.Product, error) {
-	for i := 0; i < 10; i++ {
-		if i > 0 {
-			time.Sleep(500 * time.Millisecond)
-		}
-		result, err := r.client.Products.Get(ctx, id)
-		if err != nil {
-			var notFound *apierrors.ResourceNotFound
-			if isNotFound(err, &notFound) {
-				continue
-			}
-			return nil, err
-		}
-		return result.Product, nil
-	}
-	return nil, fmt.Errorf("product %s not visible after write", id)
-}
-

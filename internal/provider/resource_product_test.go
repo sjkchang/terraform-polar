@@ -270,6 +270,39 @@ func TestAccProductResource_meteredUnit(t *testing.T) {
 	})
 }
 
+func TestAccProductResource_withBenefits(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create product with a meter_credit benefit attached
+			{
+				Config: testAccProductWithBenefitsConfig(rName),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue(
+						"polar_product.test",
+						tfjsonpath.New("name"),
+						knownvalue.StringExact(rName),
+					),
+					statecheck.ExpectKnownValue(
+						"polar_product.test",
+						tfjsonpath.New("benefit_ids"),
+						knownvalue.SetSizeExact(1),
+					),
+				},
+			},
+			// ImportState — benefit_ids is null after import (unmanaged until configured)
+			{
+				ResourceName:            "polar_product.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"benefit_ids"},
+			},
+		},
+	})
+}
+
 // --- Config helpers ---
 
 func testAccProductOneTimeFixedConfig(name string, priceAmount int64) string {
@@ -386,4 +419,47 @@ resource "polar_product" "test" {
   metadata = %s
 }
 `, name, metadata)
+}
+
+func testAccProductWithBenefitsConfig(name string) string {
+	return fmt.Sprintf(`
+resource "polar_meter" "test" {
+  name = "%[1]s-meter"
+
+  filter = {
+    conjunction = "and"
+    clauses = [{
+      property = "name"
+      operator = "eq"
+      value    = "test"
+    }]
+  }
+
+  aggregation = {
+    func = "count"
+  }
+}
+
+resource "polar_benefit" "test" {
+  type        = "meter_credit"
+  description = "Test meter credit"
+
+  meter_credit_properties = {
+    meter_id = polar_meter.test.id
+    units    = 100
+    rollover = false
+  }
+}
+
+resource "polar_product" "test" {
+  name = %[1]q
+
+  prices = [{
+    amount_type  = "fixed"
+    price_amount = 500
+  }]
+
+  benefit_ids = [polar_benefit.test.id]
+}
+`, name)
 }

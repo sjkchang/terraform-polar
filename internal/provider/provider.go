@@ -146,7 +146,6 @@ func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.Dat
 	return []func() datasource.DataSource{
 		NewMeterDataSource,
 		NewBenefitDataSource,
-		NewProductDataSource,
 		NewOrganizationDataSource,
 	}
 }

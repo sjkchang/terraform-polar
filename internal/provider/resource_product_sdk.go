@@ -151,10 +151,23 @@ func mapProductResponseToState(ctx context.Context, product *components.Product,
 	}
 
 	// Map prices
-	data.Prices = sdkPricesToModel(product.Prices)
+	data.Prices = sdkPricesToModel(product.Prices, diags)
 
 	// Map metadata
 	data.Metadata = sdkProductMetadataToMap(ctx, product.Metadata, diags)
+
+	// Map benefit_ids — only if the user is managing benefits (non-null in state)
+	if !data.BenefitIDs.IsNull() {
+		ids := make([]string, 0, len(product.Benefits))
+		for _, b := range product.Benefits {
+			if id := benefitID(b); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		benefitSet, d := types.SetValueFrom(ctx, types.StringType, ids)
+		diags.Append(d...)
+		data.BenefitIDs = benefitSet
+	}
 
 	// Map medias
 	if len(product.Medias) > 0 {
@@ -388,15 +401,53 @@ func pricesToUpdateSDK(planned []PriceModel, currentPrices []components.Prices) 
 	return result, diags
 }
 
+// --- Benefit helpers ---
+
+// extractBenefitIDsFromSet converts a types.Set of benefit IDs to a []string.
+func extractBenefitIDsFromSet(ctx context.Context, set types.Set, diags *diag.Diagnostics) []string {
+	var ids []string
+	d := set.ElementsAs(ctx, &ids, false)
+	diags.Append(d...)
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids
+}
+
+// benefitID extracts the ID string from a components.Benefit union type.
+func benefitID(b components.Benefit) string {
+	switch {
+	case b.BenefitCustom != nil:
+		return b.BenefitCustom.ID
+	case b.BenefitDiscord != nil:
+		return b.BenefitDiscord.ID
+	case b.BenefitGitHubRepository != nil:
+		return b.BenefitGitHubRepository.ID
+	case b.BenefitDownloadables != nil:
+		return b.BenefitDownloadables.ID
+	case b.BenefitLicenseKeys != nil:
+		return b.BenefitLicenseKeys.ID
+	case b.BenefitMeterCredit != nil:
+		return b.BenefitMeterCredit.ID
+	default:
+		return ""
+	}
+}
+
 // --- Response mapping ---
 
-func sdkPricesToModel(prices []components.Prices) []PriceModel {
+func sdkPricesToModel(prices []components.Prices, diags *diag.Diagnostics) []PriceModel {
 	result := make([]PriceModel, 0, len(prices))
 	for _, p := range prices {
 		if p.ProductPrice != nil {
 			model := sdkProductPriceToModel(p.ProductPrice)
 			if model != nil {
 				result = append(result, *model)
+			} else {
+				diags.AddWarning(
+					"Unknown price type",
+					"The API returned a price type not recognized by this provider version. The price was omitted from state.",
+				)
 			}
 		}
 	}

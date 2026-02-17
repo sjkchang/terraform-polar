@@ -60,3 +60,20 @@ resource "polar_product" "api_access" {
     cap_amount  = 50000
   }]
 }
+
+# Product with attached benefits
+resource "polar_product" "pro_with_benefits" {
+  name               = "Pro Plan with Benefits"
+  description        = "Premium plan with meter credits and custom perks."
+  recurring_interval = "month"
+
+  prices = [{
+    amount_type  = "fixed"
+    price_amount = 1999
+  }]
+
+  benefit_ids = [
+    polar_benefit.meter_credit.id,
+    polar_benefit.custom_perk.id,
+  ]
+}
