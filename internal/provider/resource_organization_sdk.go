@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -18,6 +19,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go/models/components"
 )
+
+// supplementalHTTPClient is a dedicated client for raw HTTP calls that bypass the SDK.
+// Uses an explicit timeout to prevent indefinite hangs.
+var supplementalHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
 
 // --- Discover the single organization scoped to the access token ---
 
@@ -235,15 +242,27 @@ func buildSupplementalPayload(data *OrganizationResourceModel) *orgSupplementalU
 	return payload
 }
 
-// mapSupplementalSubscriptionSettings reads prevent_trial_abuse from the SDK response's
-// raw subscription_settings (which the SDK does return, just without the field in the struct).
-// We re-read via raw HTTP GET to get the actual prevent_trial_abuse value.
-// For simplicity, this preserves the planned value since the SDK update + raw HTTP PATCH
-// are authoritative.
-func mapSupplementalSubscriptionSettings(org *components.Organization, data *OrganizationResourceModel) {
-	// The prevent_trial_abuse value was already preserved from the planned state
-	// in mapOrganizationResponseToState. This function is a no-op but exists as
-	// a clear extension point if we need to read it back via raw HTTP in the future.
+// mapSupplementalSubscriptionSettings reads prevent_trial_abuse from the API via
+// raw HTTP GET (the SDK struct doesn't include this field) and updates state.
+func mapSupplementalSubscriptionSettings(ctx context.Context, serverURL, token, orgID string, data *OrganizationResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if data.SubscriptionSettings == nil {
+		return diags
+	}
+
+	supplemental, err := getOrgSupplemental(ctx, serverURL, token, orgID)
+	if err != nil {
+		diags.AddWarning(
+			"Could not read subscription settings supplement",
+			fmt.Sprintf("Failed to read prevent_trial_abuse via raw HTTP: %s. The value in state may be stale.", err),
+		)
+		return diags
+	}
+
+	if supplemental.SubscriptionSettings != nil {
+		data.SubscriptionSettings.PreventTrialAbuse = types.BoolValue(supplemental.SubscriptionSettings.PreventTrialAbuse)
+	}
+	return diags
 }
 
 // patchOrgSupplemental sends a raw HTTP PATCH with retry for fields the SDK doesn't support.
@@ -254,14 +273,14 @@ func patchOrgSupplemental(ctx context.Context, serverURL, token, orgID string, p
 	}
 
 	return doWithRetry(ctx, func() (*http.Response, error) {
-		url := fmt.Sprintf("%s/v1/organizations/%s", serverURL, orgID)
+		url := fmt.Sprintf("%s/v1/organizations/%s", serverURL, url.PathEscape(orgID))
 		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
-		return http.DefaultClient.Do(req)
+		return supplementalHTTPClient.Do(req)
 	})
 }
 
@@ -270,22 +289,28 @@ func getOrgSupplemental(ctx context.Context, serverURL, token, orgID string) (*o
 	var result orgSupplementalGetResponse
 
 	err := doWithRetry(ctx, func() (*http.Response, error) {
-		url := fmt.Sprintf("%s/v1/organizations/%s", serverURL, orgID)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		reqURL := fmt.Sprintf("%s/v1/organizations/%s", serverURL, url.PathEscape(orgID))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := supplementalHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
-		// Only decode on success; doWithRetry handles status checks
+		// On success, decode and let doWithRetry handle body close
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			defer resp.Body.Close()
-			if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				return nil, fmt.Errorf("reading response body: %w", readErr)
+			}
+			if decodeErr := json.Unmarshal(body, &result); decodeErr != nil {
 				return nil, fmt.Errorf("decoding response: %w", decodeErr)
 			}
+			// Return nil response — body already consumed and closed
+			return nil, nil
 		}
 		return resp, nil
 	})
@@ -296,6 +321,8 @@ func getOrgSupplemental(ctx context.Context, serverURL, token, orgID string) (*o
 }
 
 // doWithRetry executes an HTTP request function with exponential backoff on 429/5xx.
+// If fn returns (nil, nil), the request is treated as successful (caller already
+// consumed and closed the response body).
 func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 	const maxAttempts = 5
 	const initialBackoff = 500 * time.Millisecond
@@ -306,14 +333,21 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 			return err
 		}
 
+		// nil response means caller already handled a successful response
+		if resp == nil {
+			return nil
+		}
+
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			// Success — body already consumed by caller if needed
 			resp.Body.Close()
 			return nil
 		}
 
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if readErr != nil {
+			respBody = []byte(fmt.Sprintf("(failed to read response body: %s)", readErr))
+		}
 
 		// Retry on 429 or 5xx
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {

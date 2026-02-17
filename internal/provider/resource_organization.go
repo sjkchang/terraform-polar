@@ -332,9 +332,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	})
 
 	mapOrganizationResponseToState(ctx, consistent, &data, &resp.Diagnostics)
-	if data.SubscriptionSettings != nil {
-		mapSupplementalSubscriptionSettings(consistent, &data)
-	}
+	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, consistent.ID, &data)...)
 	preserveURLFormatting(&data.Website, plannedWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -358,9 +356,7 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	mapOrganizationResponseToState(ctx, result.Organization, &data, &resp.Diagnostics)
-	if data.SubscriptionSettings != nil {
-		mapSupplementalSubscriptionSettings(result.Organization, &data)
-	}
+	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, data.ID.ValueString(), &data)...)
 	preserveURLFormatting(&data.Website, priorWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -412,9 +408,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	mapOrganizationResponseToState(ctx, consistent, &data, &resp.Diagnostics)
-	if data.SubscriptionSettings != nil {
-		mapSupplementalSubscriptionSettings(consistent, &data)
-	}
+	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, data.ID.ValueString(), &data)...)
 	preserveURLFormatting(&data.Website, plannedWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

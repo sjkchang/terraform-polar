@@ -5,6 +5,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -60,8 +61,14 @@ func (r *WebhookEndpointResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"url": schema.StringAttribute{
-				MarkdownDescription: "The URL where webhook events will be sent.",
+				MarkdownDescription: "The URL where webhook events will be sent. Must use HTTPS.",
 				Required:            true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^https://`),
+						"webhook URL must use HTTPS to protect payload confidentiality",
+					),
+				},
 			},
 			"format": schema.StringAttribute{
 				MarkdownDescription: "The format of webhook payloads. Must be `raw`, `discord`, or `slack`.",

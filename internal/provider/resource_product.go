@@ -221,6 +221,15 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		"id": result.Product.ID,
 	})
 
+	// Persist the product ID immediately so that if a subsequent step (benefits
+	// update, visibility poll) fails, a re-apply will trigger Update instead of
+	// creating a duplicate product.
+	data.ID = types.StringValue(result.Product.ID)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Update benefits if configured
 	if !data.BenefitIDs.IsNull() {
 		benefitIDs := extractBenefitIDsFromSet(ctx, data.BenefitIDs, &resp.Diagnostics)
@@ -282,6 +291,15 @@ func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, re
 			"Error reading product",
 			fmt.Sprintf("Could not read product %s: %s", data.ID.ValueString(), err),
 		)
+		return
+	}
+
+	// Treat archived products as deleted (mirrors meter resource behavior)
+	if result.Product.IsArchived {
+		tflog.Trace(ctx, "product is archived, removing from state", map[string]interface{}{
+			"id": data.ID.ValueString(),
+		})
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
