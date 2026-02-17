@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
@@ -13,20 +14,21 @@ import (
 )
 
 func TestAccProductResource_oneTimeFixed(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create one-time product with fixed price
 			{
-				Config: testAccProductOneTimeFixedConfig("tf-acc-test-product-fixed", 999),
+				Config: testAccProductOneTimeFixedConfig(rName, 999),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-fixed"),
+						knownvalue.StringExact(rName),
 					),
-	statecheck.ExpectKnownValue(
+					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("prices"),
 						knownvalue.ListSizeExact(1),
@@ -35,18 +37,18 @@ func TestAccProductResource_oneTimeFixed(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:      "polar_product.test",
-				ImportState:        true,
-				ImportStateVerify:  true,
+				ResourceName:     "polar_product.test",
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 			// Update name and price
 			{
-				Config: testAccProductOneTimeFixedConfig("tf-acc-test-product-updated", 1999),
+				Config: testAccProductOneTimeFixedConfig(rName+"-updated", 1999),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-updated"),
+						knownvalue.StringExact(rName+"-updated"),
 					),
 				},
 			},
@@ -56,17 +58,18 @@ func TestAccProductResource_oneTimeFixed(t *testing.T) {
 }
 
 func TestAccProductResource_oneTimeFree(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccProductOneTimeFreeConfig("tf-acc-test-product-free"),
+				Config: testAccProductOneTimeFreeConfig(rName),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-free"),
+						knownvalue.StringExact(rName),
 					),
 				},
 			},
@@ -75,20 +78,21 @@ func TestAccProductResource_oneTimeFree(t *testing.T) {
 }
 
 func TestAccProductResource_recurring(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create recurring monthly product
 			{
-				Config: testAccProductRecurringConfig("tf-acc-test-product-monthly", "month", 499),
+				Config: testAccProductRecurringConfig(rName, "month", 499),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-monthly"),
+						knownvalue.StringExact(rName),
 					),
-	statecheck.ExpectKnownValue(
+					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("recurring_interval"),
 						knownvalue.StringExact("month"),
@@ -97,18 +101,18 @@ func TestAccProductResource_recurring(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:      "polar_product.test",
-				ImportState:        true,
-				ImportStateVerify:  true,
+				ResourceName:     "polar_product.test",
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 			// Update name
 			{
-				Config: testAccProductRecurringConfig("tf-acc-test-product-monthly-upd", "month", 999),
+				Config: testAccProductRecurringConfig(rName+"-upd", "month", 999),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-monthly-upd"),
+						knownvalue.StringExact(rName+"-upd"),
 					),
 				},
 			},
@@ -117,12 +121,13 @@ func TestAccProductResource_recurring(t *testing.T) {
 }
 
 func TestAccProductResource_withDescription(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccProductWithDescriptionConfig("tf-acc-test-product-desc", "A test product", 500),
+				Config: testAccProductWithDescriptionConfig(rName, "A test product", 500),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
@@ -136,12 +141,13 @@ func TestAccProductResource_withDescription(t *testing.T) {
 }
 
 func TestAccProductResource_metadata(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccProductWithMetadataConfig("tf-acc-test-product-meta", `{ env = "test" }`),
+				Config: testAccProductWithMetadataConfig(rName, `{ env = "test" }`),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
@@ -152,7 +158,7 @@ func TestAccProductResource_metadata(t *testing.T) {
 			},
 			// Update metadata
 			{
-				Config: testAccProductWithMetadataConfig("tf-acc-test-product-meta", `{ env = "staging" }`),
+				Config: testAccProductWithMetadataConfig(rName, `{ env = "staging" }`),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
@@ -166,17 +172,18 @@ func TestAccProductResource_metadata(t *testing.T) {
 }
 
 func TestAccProductResource_customPrice(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccProductCustomPriceConfig("tf-acc-test-product-custom", 500, 5000, 1000),
+				Config: testAccProductCustomPriceConfig(rName, 500, 5000, 1000),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-custom"),
+						knownvalue.StringExact(rName),
 					),
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
@@ -202,13 +209,13 @@ func TestAccProductResource_customPrice(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:      "polar_product.test",
-				ImportState:        true,
-				ImportStateVerify:  true,
+				ResourceName:     "polar_product.test",
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 			// Update custom price amounts
 			{
-				Config: testAccProductCustomPriceConfig("tf-acc-test-product-custom", 1000, 10000, 2500),
+				Config: testAccProductCustomPriceConfig(rName, 1000, 10000, 2500),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
@@ -222,19 +229,20 @@ func TestAccProductResource_customPrice(t *testing.T) {
 }
 
 func TestAccProductResource_meteredUnit(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccProductMeteredUnitConfig("tf-acc-test-product-metered", "0.50", 10000),
+				Config: testAccProductMeteredUnitConfig(rName, rName+"-meter", "0.50", 10000),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-product-metered"),
+						knownvalue.StringExact(rName),
 					),
-	statecheck.ExpectKnownValue(
+					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("prices").AtSliceIndex(0).AtMapKey("amount_type"),
 						knownvalue.StringExact("metered_unit"),
@@ -332,10 +340,10 @@ resource "polar_product" "test" {
 `, name, minAmount, maxAmount, presetAmount)
 }
 
-func testAccProductMeteredUnitConfig(name, unitAmount string, capAmount int64) string {
+func testAccProductMeteredUnitConfig(name, meterName, unitAmount string, capAmount int64) string {
 	return fmt.Sprintf(`
 resource "polar_meter" "test" {
-  name = "tf-acc-test-meter-for-product"
+  name = %q
 
   filter = {
     conjunction = "and"
@@ -362,7 +370,7 @@ resource "polar_product" "test" {
     cap_amount  = %d
   }]
 }
-`, name, unitAmount, capAmount)
+`, meterName, name, unitAmount, capAmount)
 }
 
 func testAccProductWithMetadataConfig(name, metadata string) string {

@@ -3,8 +3,10 @@
 package provider
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
@@ -12,17 +14,18 @@ import (
 )
 
 func TestAccMeterDataSource_basic(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccMeterDataSourceConfig(),
+				Config: testAccMeterDataSourceConfig(rName),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"data.polar_meter.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-meter-ds"),
+						knownvalue.StringExact(rName),
 					),
 					statecheck.ExpectKnownValue(
 						"data.polar_meter.test",
@@ -40,10 +43,10 @@ func TestAccMeterDataSource_basic(t *testing.T) {
 	})
 }
 
-func testAccMeterDataSourceConfig() string {
-	return `
+func testAccMeterDataSourceConfig(name string) string {
+	return fmt.Sprintf(`
 resource "polar_meter" "test" {
-  name = "tf-acc-test-meter-ds"
+  name = %q
 
   filter = {
     conjunction = "and"
@@ -62,5 +65,5 @@ resource "polar_meter" "test" {
 data "polar_meter" "test" {
   id = polar_meter.test.id
 }
-`
+`, name)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
@@ -13,18 +14,19 @@ import (
 )
 
 func TestAccMeterResource_count(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create with count aggregation
 			{
-				Config: testAccMeterConfig("tf-acc-test-meter-count", "and", "name", "eq", "api_call", "count", ""),
+				Config: testAccMeterConfig(rName, "and", "name", "eq", "api_call", "count", ""),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_meter.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-meter-count"),
+						knownvalue.StringExact(rName),
 					),
 					statecheck.ExpectKnownValue(
 						"polar_meter.test",
@@ -46,12 +48,12 @@ func TestAccMeterResource_count(t *testing.T) {
 			},
 			// Update name
 			{
-				Config: testAccMeterConfig("tf-acc-test-meter-count-updated", "and", "name", "eq", "api_call", "count", ""),
+				Config: testAccMeterConfig(rName+"-updated", "and", "name", "eq", "api_call", "count", ""),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_meter.test",
 						tfjsonpath.New("name"),
-						knownvalue.StringExact("tf-acc-test-meter-count-updated"),
+						knownvalue.StringExact(rName+"-updated"),
 					),
 				},
 			},
@@ -61,13 +63,14 @@ func TestAccMeterResource_count(t *testing.T) {
 }
 
 func TestAccMeterResource_sum(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create with sum aggregation
 			{
-				Config: testAccMeterConfig("tf-acc-test-meter-sum", "and", "type", "eq", "usage", "sum", "amount"),
+				Config: testAccMeterConfig(rName, "and", "type", "eq", "usage", "sum", "amount"),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_meter.test",
@@ -86,13 +89,14 @@ func TestAccMeterResource_sum(t *testing.T) {
 }
 
 func TestAccMeterResource_metadata(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create with metadata
 			{
-				Config: testAccMeterConfigWithMetadata("tf-acc-test-meter-meta", `{ env = "test" }`),
+				Config: testAccMeterConfigWithMetadata(rName, `{ env = "test" }`),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_meter.test",
@@ -103,7 +107,7 @@ func TestAccMeterResource_metadata(t *testing.T) {
 			},
 			// Update metadata
 			{
-				Config: testAccMeterConfigWithMetadata("tf-acc-test-meter-meta", `{ env = "staging" }`),
+				Config: testAccMeterConfigWithMetadata(rName, `{ env = "staging" }`),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_meter.test",

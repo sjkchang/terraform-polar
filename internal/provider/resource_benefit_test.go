@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
@@ -14,13 +15,14 @@ import (
 )
 
 func TestAccBenefitResource_custom(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create
 			{
-				Config: testAccBenefitCustomConfig("tf-acc-test-custom-benefit", "Check your email for details"),
+				Config: testAccBenefitCustomConfig(rName, "Check your email for details"),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -30,7 +32,7 @@ func TestAccBenefitResource_custom(t *testing.T) {
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
 						tfjsonpath.New("description"),
-						knownvalue.StringExact("tf-acc-test-custom-benefit"),
+						knownvalue.StringExact(rName),
 					),
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -47,12 +49,12 @@ func TestAccBenefitResource_custom(t *testing.T) {
 			},
 			// Update description and note
 			{
-				Config: testAccBenefitCustomConfig("tf-acc-test-custom-updated", "Updated instructions"),
+				Config: testAccBenefitCustomConfig(rName+"-upd", "Updated instructions"),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
 						tfjsonpath.New("description"),
-						knownvalue.StringExact("tf-acc-test-custom-updated"),
+						knownvalue.StringExact(rName+"-upd"),
 					),
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -67,12 +69,13 @@ func TestAccBenefitResource_custom(t *testing.T) {
 }
 
 func TestAccBenefitResource_customNoNote(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccBenefitCustomConfigNoNote("tf-acc-test-custom-no-note"),
+				Config: testAccBenefitCustomConfigNoNote(rName),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -82,7 +85,7 @@ func TestAccBenefitResource_customNoNote(t *testing.T) {
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
 						tfjsonpath.New("description"),
-						knownvalue.StringExact("tf-acc-test-custom-no-note"),
+						knownvalue.StringExact(rName),
 					),
 				},
 			},
@@ -91,13 +94,14 @@ func TestAccBenefitResource_customNoNote(t *testing.T) {
 }
 
 func TestAccBenefitResource_meterCredit(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create meter + meter credit benefit
 			{
-				Config: testAccBenefitMeterCreditConfig("tf-acc-test-mc-benefit", 100, true),
+				Config: testAccBenefitMeterCreditConfig(rName, rName+"-meter", 100, true),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -107,7 +111,7 @@ func TestAccBenefitResource_meterCredit(t *testing.T) {
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
 						tfjsonpath.New("description"),
-						knownvalue.StringExact("tf-acc-test-mc-benefit"),
+						knownvalue.StringExact(rName),
 					),
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -129,7 +133,7 @@ func TestAccBenefitResource_meterCredit(t *testing.T) {
 			},
 			// Update units and rollover
 			{
-				Config: testAccBenefitMeterCreditConfig("tf-acc-test-mc-benefit", 200, false),
+				Config: testAccBenefitMeterCreditConfig(rName, rName+"-meter", 200, false),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -148,13 +152,14 @@ func TestAccBenefitResource_meterCredit(t *testing.T) {
 }
 
 func TestAccBenefitResource_licenseKeys(t *testing.T) {
+	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create
 			{
-				Config: testAccBenefitLicenseKeysConfig("tf-acc-test-lk-benefit", "TFTEST", 5),
+				Config: testAccBenefitLicenseKeysConfig(rName, "TFTEST", 5),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -181,7 +186,7 @@ func TestAccBenefitResource_licenseKeys(t *testing.T) {
 			},
 			// Update prefix
 			{
-				Config: testAccBenefitLicenseKeysConfig("tf-acc-test-lk-updated", "TFUPD", 10),
+				Config: testAccBenefitLicenseKeysConfig(rName+"-upd", "TFUPD", 10),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
@@ -232,10 +237,10 @@ resource "polar_benefit" "test" {
 `, description)
 }
 
-func testAccBenefitMeterCreditConfig(description string, units int64, rollover bool) string {
+func testAccBenefitMeterCreditConfig(description, meterName string, units int64, rollover bool) string {
 	return fmt.Sprintf(`
 resource "polar_meter" "test" {
-  name = "tf-acc-test-mc-meter"
+  name = %q
 
   filter = {
     conjunction = "and"
@@ -261,7 +266,7 @@ resource "polar_benefit" "test" {
     rollover = %t
   }
 }
-`, description, units, rollover)
+`, meterName, description, units, rollover)
 }
 
 func testAccBenefitLicenseKeysConfig(description, prefix string, limitUsage int64) string {

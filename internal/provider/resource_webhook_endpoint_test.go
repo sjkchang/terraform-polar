@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
@@ -13,18 +14,21 @@ import (
 )
 
 func TestAccWebhookEndpointResource_basic(t *testing.T) {
+	rSuffix := acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum)
+	createURL := fmt.Sprintf("https://example.com/webhook/tf-acc-%s", rSuffix)
+	updateURL := fmt.Sprintf("https://example.com/webhook/tf-acc-%s-updated", rSuffix)
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create and Read
 			{
-				Config: testAccWebhookEndpointConfig("https://example.com/webhook/test-create", "raw", `["order.created"]`),
+				Config: testAccWebhookEndpointConfig(createURL, "raw", `["order.created"]`),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_webhook_endpoint.test",
 						tfjsonpath.New("url"),
-						knownvalue.StringExact("https://example.com/webhook/test-create"),
+						knownvalue.StringExact(createURL),
 					),
 					statecheck.ExpectKnownValue(
 						"polar_webhook_endpoint.test",
@@ -47,12 +51,12 @@ func TestAccWebhookEndpointResource_basic(t *testing.T) {
 			},
 			// Update URL and events
 			{
-				Config: testAccWebhookEndpointConfig("https://example.com/webhook/test-update", "raw", `["order.created", "subscription.created"]`),
+				Config: testAccWebhookEndpointConfig(updateURL, "raw", `["order.created", "subscription.created"]`),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_webhook_endpoint.test",
 						tfjsonpath.New("url"),
-						knownvalue.StringExact("https://example.com/webhook/test-update"),
+						knownvalue.StringExact(updateURL),
 					),
 				},
 			},
@@ -62,13 +66,15 @@ func TestAccWebhookEndpointResource_basic(t *testing.T) {
 }
 
 func TestAccWebhookEndpointResource_disabled(t *testing.T) {
+	rSuffix := acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum)
+	webhookURL := fmt.Sprintf("https://example.com/webhook/tf-acc-%s-disabled", rSuffix)
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create disabled endpoint
 			{
-				Config: testAccWebhookEndpointConfigWithEnabled("https://example.com/webhook/test-disabled", "raw", `["order.created"]`, false),
+				Config: testAccWebhookEndpointConfigWithEnabled(webhookURL, "raw", `["order.created"]`, false),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_webhook_endpoint.test",
@@ -79,7 +85,7 @@ func TestAccWebhookEndpointResource_disabled(t *testing.T) {
 			},
 			// Enable it
 			{
-				Config: testAccWebhookEndpointConfigWithEnabled("https://example.com/webhook/test-disabled", "raw", `["order.created"]`, true),
+				Config: testAccWebhookEndpointConfigWithEnabled(webhookURL, "raw", `["order.created"]`, true),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_webhook_endpoint.test",
