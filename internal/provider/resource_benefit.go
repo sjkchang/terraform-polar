@@ -5,7 +5,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -320,11 +319,18 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	benefit, err := r.waitForVisible(ctx, data.ID.ValueString())
+	benefitID := data.ID.ValueString()
+	benefit, err := pollForVisibility(ctx, "benefit", benefitID, func() (*components.Benefit, error) {
+		result, err := r.client.Benefits.Get(ctx, benefitID)
+		if err != nil {
+			return nil, err
+		}
+		return result.Benefit, nil
+	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for benefit visibility",
-			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", data.ID.ValueString(), err),
+			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", benefitID, err),
 		)
 		return
 	}
@@ -385,11 +391,18 @@ func (r *BenefitResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	_ = result // Update succeeded; poll for read consistency
 
-	benefit, err := r.waitForVisible(ctx, data.ID.ValueString())
+	benefitID := data.ID.ValueString()
+	benefit, err := pollForVisibility(ctx, "benefit", benefitID, func() (*components.Benefit, error) {
+		result, err := r.client.Benefits.Get(ctx, benefitID)
+		if err != nil {
+			return nil, err
+		}
+		return result.Benefit, nil
+	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for benefit visibility",
-			fmt.Sprintf("Benefit %s was updated but not immediately readable: %s", data.ID.ValueString(), err),
+			fmt.Sprintf("Benefit %s was updated but not immediately readable: %s", benefitID, err),
 		)
 		return
 	}
@@ -425,27 +438,4 @@ func (r *BenefitResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *BenefitResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-// waitForVisible polls Benefits.Get until the benefit is readable,
-// handling eventual consistency after writes. Unlike the organization resource's
-// waitForReadConsistency (which checks field values), this only confirms the
-// resource is visible to subsequent reads — sufficient since benefits are written
-// and read back atomically by the API.
-func (r *BenefitResource) waitForVisible(ctx context.Context, id string) (*components.Benefit, error) {
-	for i := 0; i < 10; i++ {
-		if i > 0 {
-			time.Sleep(500 * time.Millisecond)
-		}
-		result, err := r.client.Benefits.Get(ctx, id)
-		if err != nil {
-			var notFound *apierrors.ResourceNotFound
-			if isNotFound(err, &notFound) {
-				continue
-			}
-			return nil, err
-		}
-		return result.Benefit, nil
-	}
-	return nil, fmt.Errorf("benefit %s not visible after write", id)
 }

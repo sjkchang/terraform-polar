@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -317,7 +318,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	// Poll until the read-back matches planned values (eventual consistency)
-	consistent, err := r.waitForReadConsistency(ctx, org.ID, &data)
+	consistent, err := r.waitForReadConsistency(ctx, org.ID, &data, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading organization after update",
@@ -401,7 +402,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	// Poll until the read-back matches planned values (eventual consistency)
-	consistent, err := r.waitForReadConsistency(ctx, data.ID.ValueString(), &data)
+	consistent, err := r.waitForReadConsistency(ctx, data.ID.ValueString(), &data, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading organization after update",
@@ -429,16 +430,18 @@ func (r *OrganizationResource) ImportState(ctx context.Context, req resource.Imp
 
 // waitForReadConsistency polls Organizations.Get until the response matches
 // the planned values, handling eventual consistency after writes. Returns the
-// first consistent response, or the last response after 10 attempts.
-func (r *OrganizationResource) waitForReadConsistency(ctx context.Context, orgID string, planned *OrganizationResourceModel) (*components.Organization, error) {
-	const maxPolls = 10
-	const pollInterval = 500 * time.Millisecond
-
+// first consistent response. If consistency is not reached after polling,
+// returns the last response and emits a warning diagnostic.
+func (r *OrganizationResource) waitForReadConsistency(ctx context.Context, orgID string, planned *OrganizationResourceModel, diags *diag.Diagnostics) (*components.Organization, error) {
 	var lastOrg *components.Organization
 
-	for i := 0; i < maxPolls; i++ {
+	for i := 0; i < pollMaxAttempts; i++ {
 		if i > 0 {
-			time.Sleep(pollInterval)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(pollInterval):
+			}
 		}
 
 		result, err := r.provider.Client.Organizations.Get(ctx, orgID)
@@ -456,8 +459,16 @@ func (r *OrganizationResource) waitForReadConsistency(ctx context.Context, orgID
 	}
 
 	tflog.Warn(ctx, "read-after-write consistency not reached, using last response", map[string]interface{}{
-		"polls": maxPolls,
+		"polls": pollMaxAttempts,
 	})
+	diags.AddWarning(
+		"Eventual consistency timeout",
+		fmt.Sprintf(
+			"Organization %s read-back did not match planned values after %d polls. "+
+				"The state may not reflect the latest changes. Run terraform refresh to re-sync.",
+			orgID, pollMaxAttempts,
+		),
+	)
 	return lastOrg, nil
 }
 

@@ -340,13 +340,6 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 
 // --- Helpers ---
 
-func derefBool(b *bool) bool {
-	if b == nil {
-		return false
-	}
-	return *b
-}
-
 func socialModelAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
 		"platform": types.StringType,

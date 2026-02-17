@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -194,7 +193,13 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"id": result.Meter.ID,
 	})
 
-	meter, err := r.waitForVisible(ctx, result.Meter.ID)
+	meter, err := pollForVisibility(ctx, "meter", result.Meter.ID, func() (*components.Meter, error) {
+		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
+		if err != nil {
+			return nil, err
+		}
+		return r.Meter, nil
+	}, meterNotArchived)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for meter visibility",
@@ -279,7 +284,13 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	meter, err := r.waitForVisible(ctx, result.Meter.ID)
+	meter, err := pollForVisibility(ctx, "meter", result.Meter.ID, func() (*components.Meter, error) {
+		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
+		if err != nil {
+			return nil, err
+		}
+		return r.Meter, nil
+	}, meterNotArchived)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for meter visibility",
@@ -325,39 +336,21 @@ func (r *MeterResource) ImportState(ctx context.Context, req resource.ImportStat
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// waitForVisible polls Meters.Get until the meter is readable and not archived,
-// handling eventual consistency after writes. Unlike the organization resource's
-// waitForReadConsistency (which checks field values), this only confirms the
-// resource is visible to subsequent reads — sufficient since meters are written
-// and read back atomically by the API.
-func (r *MeterResource) waitForVisible(ctx context.Context, id string) (*components.Meter, error) {
-	for i := 0; i < 10; i++ {
-		if i > 0 {
-			time.Sleep(500 * time.Millisecond)
-		}
-		result, err := r.client.Meters.Get(ctx, id)
-		if err != nil {
-			var notFound *apierrors.ResourceNotFound
-			if isNotFound(err, &notFound) {
-				continue
-			}
-			return nil, err
-		}
-		// Read treats archived meters as deleted, so keep polling
-		if result.Meter.ArchivedAt != nil {
-			continue
-		}
-		return result.Meter, nil
+// meterNotArchived is an accept function for pollForVisibility that rejects
+// archived meters with a distinct error message.
+func meterNotArchived(m *components.Meter) (bool, string) {
+	if m.ArchivedAt != nil {
+		return false, "resource exists but is archived"
 	}
-	return nil, fmt.Errorf("meter %s not visible after write", id)
+	return true, ""
 }
 
 // mapMeterResponseToState maps a Meter API response to the Terraform resource model.
 func mapMeterResponseToState(ctx context.Context, meter *components.Meter, data *MeterResourceModel, diags *diag.Diagnostics) {
 	data.ID = types.StringValue(meter.ID)
 	data.Name = types.StringValue(meter.Name)
-	data.Filter = sdkFilterToModel(meter.Filter)
-	data.Aggregation = sdkAggregationToModel(meter.Aggregation)
+	data.Filter = sdkFilterToModel(meter.Filter, diags)
+	data.Aggregation = sdkAggregationToModel(meter.Aggregation, diags)
 
 	metadataMap, metaDiags := sdkMeterMetadataToMap(ctx, meter.Metadata)
 	diags.Append(metaDiags...)
@@ -383,7 +376,7 @@ func filterModelToSDK(filter *FilterModel) components.Filter {
 	}
 }
 
-func sdkFilterToModel(filter components.Filter) *FilterModel {
+func sdkFilterToModel(filter components.Filter, diags *diag.Diagnostics) *FilterModel {
 	clauses := make([]FilterClauseModel, 0, len(filter.Clauses))
 	for _, c := range filter.Clauses {
 		if c.FilterClause != nil {
@@ -396,6 +389,11 @@ func sdkFilterToModel(filter components.Filter) *FilterModel {
 				value = strconv.FormatInt(*clause.Value.Integer, 10)
 			case clause.Value.Boolean != nil:
 				value = strconv.FormatBool(*clause.Value.Boolean)
+			default:
+				diags.AddWarning(
+					"Unknown filter clause value type",
+					fmt.Sprintf("Filter clause for property %q has an unrecognized value type. The value was set to empty.", clause.Property),
+				)
 			}
 			clauses = append(clauses, FilterClauseModel{
 				Property: types.StringValue(clause.Property),
@@ -485,7 +483,7 @@ func aggregationModelToUpdateSDK(agg *AggregationModel) *components.Aggregation 
 	return &result
 }
 
-func sdkAggregationToModel(agg components.MeterAggregation) *AggregationModel {
+func sdkAggregationToModel(agg components.MeterAggregation, diags *diag.Diagnostics) *AggregationModel {
 	model := &AggregationModel{}
 	switch {
 	case agg.CountAggregation != nil:
@@ -497,6 +495,13 @@ func sdkAggregationToModel(agg components.MeterAggregation) *AggregationModel {
 	case agg.UniqueAggregation != nil:
 		model.Func = types.StringValue("unique")
 		model.Property = types.StringValue(agg.UniqueAggregation.Property)
+	default:
+		diags.AddWarning(
+			"Unknown aggregation type",
+			"The API returned an aggregation type not recognized by this provider version. Some fields may be empty.",
+		)
+		model.Func = types.StringNull()
+		model.Property = types.StringNull()
 	}
 	return model
 }

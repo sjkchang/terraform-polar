@@ -414,20 +414,6 @@ func setBenefitCommonFields(id, benefitType, description string, data *BenefitRe
 	data.Description = types.StringValue(description)
 }
 
-func optionalStringValue(s *string) types.String {
-	if s == nil {
-		return types.StringNull()
-	}
-	return types.StringValue(*s)
-}
-
-func optionalInt64Value(i *int64) types.Int64 {
-	if i == nil {
-		return types.Int64Null()
-	}
-	return types.Int64Value(*i)
-}
-
 // licenseKeysPropsToSDK converts the TF model to SDK create properties (used for both create and update).
 func licenseKeysPropsToSDK(lk *BenefitLicenseKeysPropertiesModel) components.BenefitLicenseKeysCreateProperties {
 	props := components.BenefitLicenseKeysCreateProperties{}
