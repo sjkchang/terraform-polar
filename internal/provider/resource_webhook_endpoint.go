@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -99,16 +100,16 @@ func (r *WebhookEndpointResource) Configure(ctx context.Context, req resource.Co
 		return
 	}
 
-	client, ok := req.ProviderData.(*polargo.Polar)
+	pd, ok := req.ProviderData.(*PolarProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *polargo.Polar, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	r.client = client
+	r.client = pd.Client
 }
 
 func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -168,8 +169,17 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		endpoint = updateResult.WebhookEndpoint
 	}
 
-	// Map response to state
-	r.mapResponseToState(ctx, endpoint, &data, &resp.Diagnostics)
+	// Poll for visibility, then map response to state
+	webhook, err := r.waitForVisible(ctx, endpoint.ID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for webhook endpoint visibility",
+			fmt.Sprintf("Webhook endpoint %s was created but not immediately readable: %s", endpoint.ID, err),
+		)
+		return
+	}
+
+	r.mapResponseToState(ctx, webhook, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -232,7 +242,7 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		Enabled: &enabled,
 	}
 
-	result, err := r.client.Webhooks.UpdateWebhookEndpoint(ctx, data.ID.ValueString(), updateReq)
+	_, err := r.client.Webhooks.UpdateWebhookEndpoint(ctx, data.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating webhook endpoint",
@@ -241,7 +251,16 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	r.mapResponseToState(ctx, result.WebhookEndpoint, &data, &resp.Diagnostics)
+	webhook, err := r.waitForVisible(ctx, data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for webhook endpoint visibility",
+			fmt.Sprintf("Webhook endpoint %s was updated but not immediately readable: %s", data.ID.ValueString(), err),
+		)
+		return
+	}
+
+	r.mapResponseToState(ctx, webhook, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -273,6 +292,29 @@ func (r *WebhookEndpointResource) Delete(ctx context.Context, req resource.Delet
 
 func (r *WebhookEndpointResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// waitForVisible polls Webhooks.GetWebhookEndpoint until the endpoint is readable,
+// handling eventual consistency after writes. Unlike the organization resource's
+// waitForReadConsistency (which checks field values), this only confirms the
+// resource is visible to subsequent reads — sufficient since webhooks are written
+// and read back atomically by the API.
+func (r *WebhookEndpointResource) waitForVisible(ctx context.Context, id string) (*components.WebhookEndpoint, error) {
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, id)
+		if err != nil {
+			var notFound *apierrors.ResourceNotFound
+			if isNotFound(err, &notFound) {
+				continue
+			}
+			return nil, err
+		}
+		return result.WebhookEndpoint, nil
+	}
+	return nil, fmt.Errorf("webhook endpoint %s not visible after write", id)
 }
 
 // mapResponseToState maps a WebhookEndpoint API response to the Terraform resource model.

@@ -5,6 +5,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -177,16 +178,16 @@ func (r *ProductResource) Configure(ctx context.Context, req resource.ConfigureR
 		return
 	}
 
-	client, ok := req.ProviderData.(*polargo.Polar)
+	pd, ok := req.ProviderData.(*PolarProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *polargo.Polar, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	r.client = client
+	r.client = pd.Client
 }
 
 func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -215,8 +216,17 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		"id": result.Product.ID,
 	})
 
+	product, err := r.waitForVisible(ctx, result.Product.ID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for product visibility",
+			fmt.Sprintf("Product %s was created but not immediately readable: %s", result.Product.ID, err),
+		)
+		return
+	}
+
 	plannedPrices := data.Prices
-	mapProductResponseToState(ctx, result.Product, &data, &resp.Diagnostics)
+	mapProductResponseToState(ctx, product, &data, &resp.Diagnostics)
 	preserveUnitAmountFormatting(data.Prices, plannedPrices)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -275,7 +285,7 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 
 	plannedPrices := data.Prices
-	result, err := r.client.Products.Update(ctx, data.ID.ValueString(), *updateReq)
+	_, err = r.client.Products.Update(ctx, data.ID.ValueString(), *updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating product",
@@ -284,7 +294,16 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	mapProductResponseToState(ctx, result.Product, &data, &resp.Diagnostics)
+	product, err := r.waitForVisible(ctx, data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for product visibility",
+			fmt.Sprintf("Product %s was updated but not immediately readable: %s", data.ID.ValueString(), err),
+		)
+		return
+	}
+
+	mapProductResponseToState(ctx, product, &data, &resp.Diagnostics)
 	preserveUnitAmountFormatting(data.Prices, plannedPrices)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -320,5 +339,28 @@ func (r *ProductResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *ProductResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// waitForVisible polls Products.Get until the product is readable,
+// handling eventual consistency after writes. Unlike the organization resource's
+// waitForReadConsistency (which checks field values), this only confirms the
+// resource is visible to subsequent reads — sufficient since products are written
+// and read back atomically by the API.
+func (r *ProductResource) waitForVisible(ctx context.Context, id string) (*components.Product, error) {
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		result, err := r.client.Products.Get(ctx, id)
+		if err != nil {
+			var notFound *apierrors.ResourceNotFound
+			if isNotFound(err, &notFound) {
+				continue
+			}
+			return nil, err
+		}
+		return result.Product, nil
+	}
+	return nil, fmt.Errorf("product %s not visible after write", id)
 }
 

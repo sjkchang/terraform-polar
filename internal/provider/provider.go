@@ -34,6 +34,14 @@ type PolarProviderModel struct {
 	Server      types.String `tfsdk:"server"`
 }
 
+// PolarProviderData wraps the SDK client with additional provider-level
+// configuration needed for supplemental raw HTTP calls (SDK gaps).
+type PolarProviderData struct {
+	Client      *polargo.Polar
+	AccessToken string
+	ServerURL   string
+}
+
 func (p *PolarProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "polar"
 	resp.Version = p.version
@@ -109,9 +117,19 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 
 	client := polargo.New(opts...)
 
-	// Make the Polar client available to resources and data sources
-	resp.DataSourceData = client
-	resp.ResourceData = client
+	// Resolve the base URL for supplemental raw HTTP calls
+	serverURL := "https://sandbox-api.polar.sh"
+	if server == polargo.ServerProduction {
+		serverURL = "https://api.polar.sh"
+	}
+
+	providerData := &PolarProviderData{
+		Client:      client,
+		AccessToken: accessToken,
+		ServerURL:   serverURL,
+	}
+	resp.DataSourceData = providerData
+	resp.ResourceData = providerData
 }
 
 func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resource {
@@ -120,6 +138,7 @@ func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resourc
 		NewMeterResource,
 		NewBenefitResource,
 		NewProductResource,
+		NewOrganizationResource,
 	}
 }
 
@@ -128,6 +147,7 @@ func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.Dat
 		NewMeterDataSource,
 		NewBenefitDataSource,
 		NewProductDataSource,
+		NewOrganizationDataSource,
 	}
 }
 

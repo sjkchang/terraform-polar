@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -146,16 +147,16 @@ func (r *MeterResource) Configure(ctx context.Context, req resource.ConfigureReq
 		return
 	}
 
-	client, ok := req.ProviderData.(*polargo.Polar)
+	pd, ok := req.ProviderData.(*PolarProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *polargo.Polar, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	r.client = client
+	r.client = pd.Client
 }
 
 func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -193,7 +194,16 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"id": result.Meter.ID,
 	})
 
-	mapMeterResponseToState(ctx, result.Meter, &data, &resp.Diagnostics)
+	meter, err := r.waitForVisible(ctx, result.Meter.ID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for meter visibility",
+			fmt.Sprintf("Meter %s was created but not immediately readable: %s", result.Meter.ID, err),
+		)
+		return
+	}
+
+	mapMeterResponseToState(ctx, meter, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -269,7 +279,16 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	mapMeterResponseToState(ctx, result.Meter, &data, &resp.Diagnostics)
+	meter, err := r.waitForVisible(ctx, result.Meter.ID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for meter visibility",
+			fmt.Sprintf("Meter %s was updated but not immediately readable: %s", result.Meter.ID, err),
+		)
+		return
+	}
+
+	mapMeterResponseToState(ctx, meter, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -304,6 +323,33 @@ func (r *MeterResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 func (r *MeterResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// waitForVisible polls Meters.Get until the meter is readable and not archived,
+// handling eventual consistency after writes. Unlike the organization resource's
+// waitForReadConsistency (which checks field values), this only confirms the
+// resource is visible to subsequent reads — sufficient since meters are written
+// and read back atomically by the API.
+func (r *MeterResource) waitForVisible(ctx context.Context, id string) (*components.Meter, error) {
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		result, err := r.client.Meters.Get(ctx, id)
+		if err != nil {
+			var notFound *apierrors.ResourceNotFound
+			if isNotFound(err, &notFound) {
+				continue
+			}
+			return nil, err
+		}
+		// Read treats archived meters as deleted, so keep polling
+		if result.Meter.ArchivedAt != nil {
+			continue
+		}
+		return result.Meter, nil
+	}
+	return nil, fmt.Errorf("meter %s not visible after write", id)
 }
 
 // mapMeterResponseToState maps a Meter API response to the Terraform resource model.

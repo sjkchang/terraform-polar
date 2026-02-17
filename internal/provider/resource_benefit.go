@@ -5,6 +5,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -17,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go"
 	"github.com/polarsource/polar-go/models/apierrors"
+	"github.com/polarsource/polar-go/models/components"
 )
 
 var _ resource.Resource = &BenefitResource{}
@@ -274,16 +276,16 @@ func (r *BenefitResource) Configure(ctx context.Context, req resource.ConfigureR
 		return
 	}
 
-	client, ok := req.ProviderData.(*polargo.Polar)
+	pd, ok := req.ProviderData.(*PolarProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *polargo.Polar, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	r.client = client
+	r.client = pd.Client
 }
 
 func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -312,7 +314,22 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		"type": data.Type.ValueString(),
 	})
 
+	// Extract the ID from the create response, then poll for visibility
 	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	benefit, err := r.waitForVisible(ctx, data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for benefit visibility",
+			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", data.ID.ValueString(), err),
+		)
+		return
+	}
+
+	mapBenefitResponseToState(ctx, benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -366,7 +383,18 @@ func (r *BenefitResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
+	_ = result // Update succeeded; poll for read consistency
+
+	benefit, err := r.waitForVisible(ctx, data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for benefit visibility",
+			fmt.Sprintf("Benefit %s was updated but not immediately readable: %s", data.ID.ValueString(), err),
+		)
+		return
+	}
+
+	mapBenefitResponseToState(ctx, benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -397,4 +425,27 @@ func (r *BenefitResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *BenefitResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// waitForVisible polls Benefits.Get until the benefit is readable,
+// handling eventual consistency after writes. Unlike the organization resource's
+// waitForReadConsistency (which checks field values), this only confirms the
+// resource is visible to subsequent reads — sufficient since benefits are written
+// and read back atomically by the API.
+func (r *BenefitResource) waitForVisible(ctx context.Context, id string) (*components.Benefit, error) {
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		result, err := r.client.Benefits.Get(ctx, id)
+		if err != nil {
+			var notFound *apierrors.ResourceNotFound
+			if isNotFound(err, &notFound) {
+				continue
+			}
+			return nil, err
+		}
+		return result.Benefit, nil
+	}
+	return nil, fmt.Errorf("benefit %s not visible after write", id)
 }
