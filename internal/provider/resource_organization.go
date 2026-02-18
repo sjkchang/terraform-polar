@@ -78,14 +78,15 @@ type NotificationSettingsModel struct {
 }
 
 type CustomerEmailSettingsModel struct {
-	OrderConfirmation        types.Bool `tfsdk:"order_confirmation"`
-	SubscriptionCancellation types.Bool `tfsdk:"subscription_cancellation"`
-	SubscriptionConfirmation types.Bool `tfsdk:"subscription_confirmation"`
-	SubscriptionCycled       types.Bool `tfsdk:"subscription_cycled"`
-	SubscriptionPastDue      types.Bool `tfsdk:"subscription_past_due"`
-	SubscriptionRevoked      types.Bool `tfsdk:"subscription_revoked"`
-	SubscriptionUncanceled   types.Bool `tfsdk:"subscription_uncanceled"`
-	SubscriptionUpdated      types.Bool `tfsdk:"subscription_updated"`
+	OrderConfirmation            types.Bool `tfsdk:"order_confirmation"`
+	SubscriptionCancellation     types.Bool `tfsdk:"subscription_cancellation"`
+	SubscriptionConfirmation     types.Bool `tfsdk:"subscription_confirmation"`
+	SubscriptionCycled           types.Bool `tfsdk:"subscription_cycled"`
+	SubscriptionCycledAfterTrial types.Bool `tfsdk:"subscription_cycled_after_trial"`
+	SubscriptionPastDue          types.Bool `tfsdk:"subscription_past_due"`
+	SubscriptionRevoked          types.Bool `tfsdk:"subscription_revoked"`
+	SubscriptionUncanceled       types.Bool `tfsdk:"subscription_uncanceled"`
+	SubscriptionUpdated          types.Bool `tfsdk:"subscription_updated"`
 }
 
 // --- Resource interface ---
@@ -235,6 +236,10 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 						MarkdownDescription: "Whether to send subscription renewal emails.",
 						Required:            true,
 					},
+					"subscription_cycled_after_trial": schema.BoolAttribute{
+						MarkdownDescription: "Whether to send subscription renewal emails after a trial period ends.",
+						Required:            true,
+					},
 					"subscription_past_due": schema.BoolAttribute{
 						MarkdownDescription: "Whether to send subscription past-due emails.",
 						Required:            true,
@@ -309,50 +314,34 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	writeTime := latestTimestamp(updateResult.Organization)
-
-	// The SDK is missing `prevent_trial_abuse` on subscription_settings, so we
-	// use a raw HTTP PATCH to send the full subscription_settings payload.
-	if data.SubscriptionSettings != nil {
+	// The SDK is missing fields in subscription_settings and customer_email_settings,
+	// so we use a raw HTTP PATCH to send complete payloads for these blocks.
+	if data.SubscriptionSettings != nil || data.CustomerEmailSettings != nil {
 		payload := buildSupplementalPayload(&data)
 		if err := patchOrgSupplemental(ctx, r.provider.ServerURL, r.provider.AccessToken, org.ID, payload); err != nil {
 			resp.Diagnostics.AddError(
-				"Error updating subscription settings",
-				fmt.Sprintf("Could not update subscription settings: %s", err),
+				"Error updating supplemental settings",
+				fmt.Sprintf("Could not update supplemental settings: %s", err),
 			)
 			return
 		}
 	}
 
-	// Eventual consistency poll.
-	consistent, err := pollForConsistency(ctx, "organization", org.ID, writeTime, func() (*components.Organization, error) {
-		result, err := r.provider.Client.Organizations.Get(ctx, org.ID)
-		if err != nil {
-			return nil, err
-		}
-		return result.Organization, nil
-	}, &resp.Diagnostics)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error reading organization after update",
-			fmt.Sprintf("Could not read organization %s: %s", org.ID, err),
-		)
-		return
-	}
-
 	tflog.Trace(ctx, "adopted organization", map[string]interface{}{
-		"id": consistent.ID,
+		"id": updateResult.Organization.ID,
 	})
 
-	// Map response to state. Supplemental HTTP GET reads prevent_trial_abuse
-	// (not in SDK response). preserveURLFormatting avoids trailing-slash diffs.
-	mapOrganizationResponseToState(ctx, consistent, &data, &resp.Diagnostics)
-	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, consistent.ID, &data)...)
+	// Map SDK fields from the write response (fresh). Subscription/email settings
+	// are excluded from the SDK update — mapSupplementalSettings reads them via raw HTTP.
+	mapOrganizationResponseToState(ctx, updateResult.Organization, &data, &resp.Diagnostics)
+	resp.Diagnostics.Append(mapSupplementalSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, org.ID, &data)...)
 	preserveURLFormatting(&data.Website, plannedWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(updateResult.Organization), resp.Private)...)
 }
 
 // Read: SDK GET + supplemental HTTP GET for prevent_trial_abuse.
+// Uses readWithConsistency to poll if a recent Create/Update stored a write timestamp.
 func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data OrganizationResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -362,17 +351,24 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 
 	priorWebsite := data.Website
 
-	result, err := r.provider.Client.Organizations.Get(ctx, data.ID.ValueString())
+	id := data.ID.ValueString()
+	org, err := readWithConsistency(ctx, "organization", id, req.Private, resp.Private, func() (*components.Organization, error) {
+		result, err := r.provider.Client.Organizations.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return result.Organization, nil
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading organization",
-			fmt.Sprintf("Could not read organization %s: %s", data.ID.ValueString(), err),
+			fmt.Sprintf("Could not read organization %s: %s", id, err),
 		)
 		return
 	}
 
-	mapOrganizationResponseToState(ctx, result.Organization, &data, &resp.Diagnostics)
-	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, data.ID.ValueString(), &data)...)
+	mapOrganizationResponseToState(ctx, org, &data, &resp.Diagnostics)
+	resp.Diagnostics.Append(mapSupplementalSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, id, &data)...)
 	preserveURLFormatting(&data.Website, priorWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -402,40 +398,26 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	writeTime := latestTimestamp(updateResult.Organization)
-
-	// Raw HTTP PATCH for prevent_trial_abuse (same SDK gap as Create).
-	if data.SubscriptionSettings != nil {
+	// Raw HTTP PATCH for SDK gap fields (same pattern as Create).
+	if data.SubscriptionSettings != nil || data.CustomerEmailSettings != nil {
 		payload := buildSupplementalPayload(&data)
 		if err := patchOrgSupplemental(ctx, r.provider.ServerURL, r.provider.AccessToken, data.ID.ValueString(), payload); err != nil {
 			resp.Diagnostics.AddError(
-				"Error updating subscription settings",
-				fmt.Sprintf("Could not update subscription settings: %s", err),
+				"Error updating supplemental settings",
+				fmt.Sprintf("Could not update supplemental settings: %s", err),
 			)
 			return
 		}
 	}
 
-	// Eventual consistency poll.
-	consistent, err := pollForConsistency(ctx, "organization", data.ID.ValueString(), writeTime, func() (*components.Organization, error) {
-		result, err := r.provider.Client.Organizations.Get(ctx, data.ID.ValueString())
-		if err != nil {
-			return nil, err
-		}
-		return result.Organization, nil
-	}, &resp.Diagnostics)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error reading organization after update",
-			fmt.Sprintf("Could not read organization %s: %s", data.ID.ValueString(), err),
-		)
-		return
-	}
-
-	mapOrganizationResponseToState(ctx, consistent, &data, &resp.Diagnostics)
-	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, data.ID.ValueString(), &data)...)
+	// Map SDK fields from the write response (fresh). Subscription/email settings
+	// are excluded from the SDK update — mapSupplementalSettings reads them via raw HTTP.
+	id := data.ID.ValueString()
+	mapOrganizationResponseToState(ctx, updateResult.Organization, &data, &resp.Diagnostics)
+	resp.Diagnostics.Append(mapSupplementalSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, id, &data)...)
 	preserveURLFormatting(&data.Website, plannedWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(updateResult.Organization), resp.Private)...)
 }
 
 // Delete is a no-op — orgs can't be deleted via API. We just drop from TF state.

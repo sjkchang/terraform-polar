@@ -112,20 +112,7 @@ func buildOrganizationUpdate(ctx context.Context, data *OrganizationResourceMode
 		update.NotificationSettings = ns
 	}
 
-	// Customer email settings
-	if data.CustomerEmailSettings != nil {
-		ces := &components.OrganizationCustomerEmailSettings{
-			OrderConfirmation:        data.CustomerEmailSettings.OrderConfirmation.ValueBool(),
-			SubscriptionCancellation: data.CustomerEmailSettings.SubscriptionCancellation.ValueBool(),
-			SubscriptionConfirmation: data.CustomerEmailSettings.SubscriptionConfirmation.ValueBool(),
-			SubscriptionCycled:       data.CustomerEmailSettings.SubscriptionCycled.ValueBool(),
-			SubscriptionPastDue:      data.CustomerEmailSettings.SubscriptionPastDue.ValueBool(),
-			SubscriptionRevoked:      data.CustomerEmailSettings.SubscriptionRevoked.ValueBool(),
-			SubscriptionUncanceled:   data.CustomerEmailSettings.SubscriptionUncanceled.ValueBool(),
-			SubscriptionUpdated:      data.CustomerEmailSettings.SubscriptionUpdated.ValueBool(),
-		}
-		update.CustomerEmailSettings = ces
-	}
+	// Customer email settings: handled via raw HTTP (SDK missing subscription_cycled_after_trial field)
 
 	return &update, diags
 }
@@ -176,19 +163,8 @@ func mapOrganizationResponseToState(ctx context.Context, org *components.Organiz
 		}
 	}
 
-	// Subscription settings: SDK fields mapped here; prevent_trial_abuse handled
-	// separately via mapSupplementalSubscriptionSettings
-	if data.SubscriptionSettings != nil {
-		ss := org.SubscriptionSettings
-		data.SubscriptionSettings = &SubscriptionSettingsModel{
-			AllowMultipleSubscriptions:   types.BoolValue(ss.AllowMultipleSubscriptions),
-			AllowCustomerUpdates:         types.BoolValue(ss.AllowCustomerUpdates),
-			ProrationBehavior:            types.StringValue(string(ss.ProrationBehavior)),
-			BenefitRevocationGracePeriod: types.Int64Value(ss.BenefitRevocationGracePeriod),
-			// PreventTrialAbuse is set by mapSupplementalSubscriptionSettings
-			PreventTrialAbuse: data.SubscriptionSettings.PreventTrialAbuse,
-		}
-	}
+	// Subscription settings: mapped via mapSupplementalSettings
+	// (SDK missing prevent_trial_abuse, entire block sent via raw HTTP)
 
 	if data.NotificationSettings != nil {
 		data.NotificationSettings = &NotificationSettingsModel{
@@ -197,23 +173,15 @@ func mapOrganizationResponseToState(ctx context.Context, org *components.Organiz
 		}
 	}
 
-	if data.CustomerEmailSettings != nil {
-		data.CustomerEmailSettings = &CustomerEmailSettingsModel{
-			OrderConfirmation:        types.BoolValue(org.CustomerEmailSettings.OrderConfirmation),
-			SubscriptionCancellation: types.BoolValue(org.CustomerEmailSettings.SubscriptionCancellation),
-			SubscriptionConfirmation: types.BoolValue(org.CustomerEmailSettings.SubscriptionConfirmation),
-			SubscriptionCycled:       types.BoolValue(org.CustomerEmailSettings.SubscriptionCycled),
-			SubscriptionPastDue:      types.BoolValue(org.CustomerEmailSettings.SubscriptionPastDue),
-			SubscriptionRevoked:      types.BoolValue(org.CustomerEmailSettings.SubscriptionRevoked),
-			SubscriptionUncanceled:   types.BoolValue(org.CustomerEmailSettings.SubscriptionUncanceled),
-			SubscriptionUpdated:      types.BoolValue(org.CustomerEmailSettings.SubscriptionUpdated),
-		}
-	}
+	// Customer email settings: mapped via mapSupplementalCustomerEmailSettings
+	// (SDK missing subscription_cycled_after_trial field, same gap as subscription_settings)
 }
 
-// --- Raw HTTP for subscription_settings (SDK gap workaround) ---
-// The Speakeasy-generated SDK omits `prevent_trial_abuse` from the subscription
-// settings struct. We use raw HTTP PATCH/GET to fill the gap.
+// --- Raw HTTP for SDK gap workarounds ---
+// The Speakeasy-generated SDK omits certain fields:
+// - subscription_settings: missing `prevent_trial_abuse`
+// - customer_email_settings: missing `subscription_cycled_after_trial`
+// We bypass the SDK with raw HTTP PATCH/GET for these settings blocks.
 
 type subscriptionSettingsJSON struct {
 	AllowMultipleSubscriptions   bool   `json:"allow_multiple_subscriptions"`
@@ -223,17 +191,31 @@ type subscriptionSettingsJSON struct {
 	PreventTrialAbuse            bool   `json:"prevent_trial_abuse"`
 }
 
+type customerEmailSettingsJSON struct {
+	OrderConfirmation            bool `json:"order_confirmation"`
+	SubscriptionCancellation     bool `json:"subscription_cancellation"`
+	SubscriptionConfirmation     bool `json:"subscription_confirmation"`
+	SubscriptionCycled           bool `json:"subscription_cycled"`
+	SubscriptionCycledAfterTrial bool `json:"subscription_cycled_after_trial"`
+	SubscriptionPastDue          bool `json:"subscription_past_due"`
+	SubscriptionRevoked          bool `json:"subscription_revoked"`
+	SubscriptionUncanceled       bool `json:"subscription_uncanceled"`
+	SubscriptionUpdated          bool `json:"subscription_updated"`
+}
+
 // orgSupplementalUpdatePayload is the raw HTTP PATCH body for fields the SDK doesn't support.
 type orgSupplementalUpdatePayload struct {
-	SubscriptionSettings *subscriptionSettingsJSON `json:"subscription_settings,omitempty"`
+	SubscriptionSettings  *subscriptionSettingsJSON  `json:"subscription_settings,omitempty"`
+	CustomerEmailSettings *customerEmailSettingsJSON `json:"customer_email_settings,omitempty"`
 }
 
-// orgSupplementalGetResponse extracts subscription_settings from the org GET response.
+// orgSupplementalGetResponse extracts settings from the org GET response.
 type orgSupplementalGetResponse struct {
-	SubscriptionSettings *subscriptionSettingsJSON `json:"subscription_settings"`
+	SubscriptionSettings  *subscriptionSettingsJSON  `json:"subscription_settings"`
+	CustomerEmailSettings *customerEmailSettingsJSON `json:"customer_email_settings"`
 }
 
-// buildSupplementalPayload builds the raw HTTP payload for subscription_settings.
+// buildSupplementalPayload builds the raw HTTP payload for settings the SDK can't send.
 func buildSupplementalPayload(data *OrganizationResourceModel) *orgSupplementalUpdatePayload {
 	payload := &orgSupplementalUpdatePayload{}
 	if data.SubscriptionSettings != nil {
@@ -245,28 +227,62 @@ func buildSupplementalPayload(data *OrganizationResourceModel) *orgSupplementalU
 			PreventTrialAbuse:            data.SubscriptionSettings.PreventTrialAbuse.ValueBool(),
 		}
 	}
+	if data.CustomerEmailSettings != nil {
+		payload.CustomerEmailSettings = &customerEmailSettingsJSON{
+			OrderConfirmation:            data.CustomerEmailSettings.OrderConfirmation.ValueBool(),
+			SubscriptionCancellation:     data.CustomerEmailSettings.SubscriptionCancellation.ValueBool(),
+			SubscriptionConfirmation:     data.CustomerEmailSettings.SubscriptionConfirmation.ValueBool(),
+			SubscriptionCycled:           data.CustomerEmailSettings.SubscriptionCycled.ValueBool(),
+			SubscriptionCycledAfterTrial: data.CustomerEmailSettings.SubscriptionCycledAfterTrial.ValueBool(),
+			SubscriptionPastDue:          data.CustomerEmailSettings.SubscriptionPastDue.ValueBool(),
+			SubscriptionRevoked:          data.CustomerEmailSettings.SubscriptionRevoked.ValueBool(),
+			SubscriptionUncanceled:       data.CustomerEmailSettings.SubscriptionUncanceled.ValueBool(),
+			SubscriptionUpdated:          data.CustomerEmailSettings.SubscriptionUpdated.ValueBool(),
+		}
+	}
 	return payload
 }
 
-// mapSupplementalSubscriptionSettings reads prevent_trial_abuse from the API via
-// raw HTTP GET (the SDK struct doesn't include this field) and updates state.
-func mapSupplementalSubscriptionSettings(ctx context.Context, serverURL, token, orgID string, data *OrganizationResourceModel) diag.Diagnostics {
+// mapSupplementalSettings reads fields the SDK omits from the API via raw HTTP
+// GET and updates state. Handles both subscription_settings and customer_email_settings.
+func mapSupplementalSettings(ctx context.Context, serverURL, token, orgID string, data *OrganizationResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
-	if data.SubscriptionSettings == nil {
+	if data.SubscriptionSettings == nil && data.CustomerEmailSettings == nil {
 		return diags
 	}
 
 	supplemental, err := getOrgSupplemental(ctx, serverURL, token, orgID)
 	if err != nil {
 		diags.AddWarning(
-			"Could not read subscription settings supplement",
-			fmt.Sprintf("Failed to read prevent_trial_abuse via raw HTTP: %s. The value in state may be stale.", err),
+			"Could not read supplemental settings",
+			fmt.Sprintf("Failed to read supplemental settings via raw HTTP: %s. Values in state may be stale.", err),
 		)
 		return diags
 	}
 
-	if supplemental.SubscriptionSettings != nil {
-		data.SubscriptionSettings.PreventTrialAbuse = types.BoolValue(supplemental.SubscriptionSettings.PreventTrialAbuse)
+	if data.SubscriptionSettings != nil && supplemental.SubscriptionSettings != nil {
+		ss := supplemental.SubscriptionSettings
+		data.SubscriptionSettings = &SubscriptionSettingsModel{
+			AllowMultipleSubscriptions:   types.BoolValue(ss.AllowMultipleSubscriptions),
+			AllowCustomerUpdates:         types.BoolValue(ss.AllowCustomerUpdates),
+			ProrationBehavior:            types.StringValue(ss.ProrationBehavior),
+			BenefitRevocationGracePeriod: types.Int64Value(ss.BenefitRevocationGracePeriod),
+			PreventTrialAbuse:            types.BoolValue(ss.PreventTrialAbuse),
+		}
+	}
+	if data.CustomerEmailSettings != nil && supplemental.CustomerEmailSettings != nil {
+		ces := supplemental.CustomerEmailSettings
+		data.CustomerEmailSettings = &CustomerEmailSettingsModel{
+			OrderConfirmation:            types.BoolValue(ces.OrderConfirmation),
+			SubscriptionCancellation:     types.BoolValue(ces.SubscriptionCancellation),
+			SubscriptionConfirmation:     types.BoolValue(ces.SubscriptionConfirmation),
+			SubscriptionCycled:           types.BoolValue(ces.SubscriptionCycled),
+			SubscriptionCycledAfterTrial: types.BoolValue(ces.SubscriptionCycledAfterTrial),
+			SubscriptionPastDue:          types.BoolValue(ces.SubscriptionPastDue),
+			SubscriptionRevoked:          types.BoolValue(ces.SubscriptionRevoked),
+			SubscriptionUncanceled:       types.BoolValue(ces.SubscriptionUncanceled),
+			SubscriptionUpdated:          types.BoolValue(ces.SubscriptionUpdated),
+		}
 	}
 	return diags
 }

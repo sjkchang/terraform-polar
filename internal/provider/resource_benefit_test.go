@@ -211,6 +211,48 @@ func TestBenefitResource_descriptionValidation(t *testing.T) {
 	})
 }
 
+func TestBenefitResource_conflictingProperties(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "polar_benefit" "test" {
+  type        = "custom"
+  description = "Test"
+
+  discord_properties = {
+    guild_token = "token"
+    role_id     = "123"
+    kick_member = false
+  }
+}
+`,
+				ExpectError: regexp.MustCompile(`"discord_properties" cannot be set when type is "custom"`),
+			},
+			{
+				Config: `
+resource "polar_benefit" "test" {
+  type        = "meter_credit"
+  description = "Test"
+
+  custom_properties = {
+    note = "wrong"
+  }
+
+  meter_credit_properties = {
+    meter_id = "some-id"
+    units    = 100
+    rollover = false
+  }
+}
+`,
+				ExpectError: regexp.MustCompile(`"custom_properties" cannot be set when type is "meter_credit"`),
+			},
+		},
+	})
+}
+
 // --- Config helpers ---
 
 func testAccBenefitCustomConfig(description, note string) string {

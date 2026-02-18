@@ -4,6 +4,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -48,23 +49,6 @@ func isNotFound(err error) bool {
 	return errors.As(err, &notFound)
 }
 
-// extractProviderData extracts the *PolarProviderData from provider configuration.
-// Returns nil without error when providerData is nil (early provider lifecycle).
-func extractProviderData(providerData any, diags *diag.Diagnostics) *PolarProviderData {
-	if providerData == nil {
-		return nil
-	}
-	pd, ok := providerData.(*PolarProviderData)
-	if !ok {
-		diags.AddError(
-			"Unexpected Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", providerData),
-		)
-		return nil
-	}
-	return pd
-}
-
 // handleNotFoundRemove checks if err is a 404 ResourceNotFound error and, if so,
 // logs it and removes the resource from Terraform state. Returns true if the error
 // was a 404 (caller should return early), false otherwise.
@@ -80,6 +64,23 @@ func handleNotFoundRemove(ctx context.Context, err error, resourceType, id strin
 	tflog.Trace(ctx, resourceType+" not found, removing from state", map[string]interface{}{"id": id})
 	state.RemoveResource(ctx)
 	return true
+}
+
+// extractProviderData extracts the *PolarProviderData from provider configuration.
+// Returns nil without error when providerData is nil (early provider lifecycle).
+func extractProviderData(providerData any, diags *diag.Diagnostics) *PolarProviderData {
+	if providerData == nil {
+		return nil
+	}
+	pd, ok := providerData.(*PolarProviderData)
+	if !ok {
+		diags.AddError(
+			"Unexpected Configure Type",
+			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", providerData),
+		)
+		return nil
+	}
+	return pd
 }
 
 // --- Nil-safe pointer → Terraform type converters ---
@@ -108,12 +109,77 @@ func derefBool(b *bool) bool {
 	return *b
 }
 
-// pollForConsistency polls fetch until it returns a result whose timestamp is
-// at or after writeTimestamp. Retries on ResourceNotFound and stale-read
-// errors. If polling exhausts all attempts and at least one successful read
-// was obtained, the last result is returned with a warning diagnostic. If no
-// successful read was ever obtained (e.g. persistent 404), a hard error is returned.
-func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id string, writeTimestamp time.Time, fetch func() (T, error), diags *diag.Diagnostics) (T, error) {
+// --- Private state helpers for write timestamp ---
+// After a Create/Update, we store the write timestamp in Terraform's private
+// state. When Read is called (e.g. during acceptance tests' implicit refresh),
+// it checks this timestamp and polls until the GET response catches up.
+// This avoids polling in Create/Update (where the write response is already
+// available) while still ensuring test consistency.
+
+const writeTimestampKey = "write_ts"
+
+// privateStateData is satisfied by the Private field on resource request/response
+// types (*privatestate.ProviderData from the framework's internal package).
+type privateStateData interface {
+	GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics)
+	SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics
+}
+
+// setWriteTimestamp stores the write timestamp in private state so a subsequent
+// Read can poll for consistency. The timestamp is stored as a JSON string.
+func setWriteTimestamp(ctx context.Context, t time.Time, private privateStateData) diag.Diagnostics {
+	ts, err := json.Marshal(t.Format(time.RFC3339Nano))
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Failed to marshal write timestamp", err.Error())
+		return diags
+	}
+	return private.SetKey(ctx, writeTimestampKey, ts)
+}
+
+// getWriteTimestamp retrieves the write timestamp from private state.
+// Returns (time, true, diags) if found, or (zero, false, diags) if absent.
+func getWriteTimestamp(ctx context.Context, private privateStateData) (time.Time, bool, diag.Diagnostics) {
+	data, diags := private.GetKey(ctx, writeTimestampKey)
+	if diags.HasError() || len(data) == 0 {
+		return time.Time{}, false, diags
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		diags.AddError("Failed to unmarshal write timestamp", err.Error())
+		return time.Time{}, false, diags
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		diags.AddError("Failed to parse write timestamp", err.Error())
+		return time.Time{}, false, diags
+	}
+	return t, true, diags
+}
+
+// readWithConsistency fetches a resource, polling for eventual consistency if
+// a write timestamp exists in private state. When no write timestamp is present
+// (e.g. a standalone terraform plan/refresh), it fetches exactly once.
+// After a successful consistent read, the write timestamp is cleared from
+// private state so subsequent reads don't poll unnecessarily.
+func readWithConsistency[T Timestamped](
+	ctx context.Context,
+	resourceType string,
+	id string,
+	reqPrivate privateStateData,
+	respPrivate privateStateData,
+	fetch func() (T, error),
+	diags *diag.Diagnostics,
+) (T, error) {
+	writeTS, hasWriteTS, d := getWriteTimestamp(ctx, reqPrivate)
+	diags.Append(d...)
+
+	if !hasWriteTS {
+		return fetch()
+	}
+
+	// Poll for consistency — same logic as the old pollForConsistency but
+	// triggered from Read instead of Create/Update.
 	var last T
 	var hasResult bool
 	var lastRejectReason string
@@ -138,7 +204,7 @@ func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id str
 		}
 		last = result
 		hasResult = true
-		if latestTimestamp(result).Before(writeTimestamp) {
+		if latestTimestamp(result).Before(writeTS) {
 			lastRejectReason = "stale read (timestamp before write)"
 			continue
 		}
@@ -147,10 +213,11 @@ func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id str
 			"id":       id,
 			"polls":    i + 1,
 		})
+		// Clear write_ts so future reads don't poll.
+		diags.Append(respPrivate.SetKey(ctx, writeTimestampKey, nil)...)
 		return result, nil
 	}
 
-	// If we never got a successful read, return a hard error.
 	if !hasResult {
 		var zero T
 		msg := fmt.Sprintf("%s %s not readable after %d polls", resourceType, id, pollMaxAttempts)
@@ -169,5 +236,7 @@ func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id str
 			resourceType, id, pollMaxAttempts, lastRejectReason,
 		),
 	)
+	// Clear write_ts even on timeout so the next read starts fresh.
+	diags.Append(respPrivate.SetKey(ctx, writeTimestampKey, nil)...)
 	return last, nil
 }

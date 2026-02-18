@@ -21,6 +21,7 @@ import (
 // Compile-time interface conformance checks.
 var _ resource.Resource = &BenefitResource{}
 var _ resource.ResourceWithImportState = &BenefitResource{}
+var _ resource.ResourceWithValidateConfig = &BenefitResource{}
 
 func NewBenefitResource() resource.Resource {
 	return &BenefitResource{}
@@ -278,6 +279,58 @@ func (r *BenefitResource) Configure(ctx context.Context, req resource.ConfigureR
 	}
 }
 
+// benefitPropertiesAttrs maps each benefit type to its expected properties attribute name.
+var benefitPropertiesAttrs = map[string]string{
+	"custom":            "custom_properties",
+	"discord":           "discord_properties",
+	"github_repository": "github_repository_properties",
+	"downloadables":     "downloadables_properties",
+	"license_keys":      "license_keys_properties",
+	"meter_credit":      "meter_credit_properties",
+}
+
+func (r *BenefitResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data BenefitResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// type may be unknown during plan with variables — skip validation.
+	if data.Type.IsUnknown() {
+		return
+	}
+
+	benefitType := data.Type.ValueString()
+	expectedAttr, ok := benefitPropertiesAttrs[benefitType]
+	if !ok {
+		return // OneOf validator on the type field handles invalid types
+	}
+
+	// Check which properties blocks are set.
+	setBlocks := map[string]bool{
+		"custom_properties":            data.CustomProperties != nil,
+		"discord_properties":           data.DiscordProperties != nil,
+		"github_repository_properties": data.GitHubRepositoryProperties != nil,
+		"downloadables_properties":     data.DownloadablesProperties != nil,
+		"license_keys_properties":      data.LicenseKeysProperties != nil,
+		"meter_credit_properties":      data.MeterCreditProperties != nil,
+	}
+
+	for attr, isSet := range setBlocks {
+		if attr == expectedAttr {
+			continue
+		}
+		if isSet {
+			resp.Diagnostics.AddAttributeError(
+				path.Root(attr),
+				"Conflicting properties block",
+				fmt.Sprintf("%q cannot be set when type is %q. Use %q instead.", attr, benefitType, expectedAttr),
+			)
+		}
+	}
+}
+
 // Create: plan → build type-specific SDK request → call API → poll → save state.
 // The benefit SDK types are polymorphic (union), so buildBenefitCreateRequest
 // dispatches to the correct builder based on the `type` field.
@@ -308,28 +361,9 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		"type": data.Type.ValueString(),
 	})
 
-	// Benefit SDK response is a union — extract ID from the active variant.
-	// timestampedBenefit wraps the union to satisfy the Timestamped interface
-	// needed by pollForConsistency.
-	id := benefitID(*result.Benefit)
-	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
-	wrappedBenefit, err := pollForConsistency(ctx, "benefit", id, writeTime, func() (*timestampedBenefit, error) {
-		result, err := r.client.Benefits.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return &timestampedBenefit{result.Benefit}, nil
-	}, &resp.Diagnostics)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error waiting for benefit visibility",
-			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", id, err),
-		)
-		return
-	}
-
-	mapBenefitResponseToState(ctx, wrappedBenefit.Benefit, &data, &resp.Diagnostics)
+	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(&timestampedBenefit{result.Benefit}), resp.Private)...)
 }
 
 func (r *BenefitResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -339,19 +373,26 @@ func (r *BenefitResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	result, err := r.client.Benefits.Get(ctx, data.ID.ValueString())
+	id := data.ID.ValueString()
+	wrapped, err := readWithConsistency(ctx, "benefit", id, req.Private, resp.Private, func() (*timestampedBenefit, error) {
+		result, err := r.client.Benefits.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return &timestampedBenefit{result.Benefit}, nil
+	}, &resp.Diagnostics)
 	if err != nil {
-		if handleNotFoundRemove(ctx, err, "benefit", data.ID.ValueString(), &resp.State) {
+		if handleNotFoundRemove(ctx, err, "benefit", id, &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
 			"Error reading benefit",
-			fmt.Sprintf("Could not read benefit %s: %s", data.ID.ValueString(), err),
+			fmt.Sprintf("Could not read benefit %s: %s", id, err),
 		)
 		return
 	}
 
-	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
+	mapBenefitResponseToState(ctx, wrapped.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -377,25 +418,9 @@ func (r *BenefitResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	benefitID := data.ID.ValueString()
-	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
-	wrappedBenefit, err := pollForConsistency(ctx, "benefit", benefitID, writeTime, func() (*timestampedBenefit, error) {
-		result, err := r.client.Benefits.Get(ctx, benefitID)
-		if err != nil {
-			return nil, err
-		}
-		return &timestampedBenefit{result.Benefit}, nil
-	}, &resp.Diagnostics)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error reading benefit after update",
-			fmt.Sprintf("Could not read benefit %s: %s", benefitID, err),
-		)
-		return
-	}
-
-	mapBenefitResponseToState(ctx, wrappedBenefit.Benefit, &data, &resp.Diagnostics)
+	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(&timestampedBenefit{result.Benefit}), resp.Private)...)
 }
 
 // Delete performs a real DELETE (unlike meters/products which archive).

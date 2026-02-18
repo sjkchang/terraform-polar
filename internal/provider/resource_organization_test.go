@@ -262,14 +262,15 @@ func testAccOrganizationCustomerEmailSettings() string {
 	return `
 resource "polar_organization" "test" {
   customer_email_settings = {
-    order_confirmation        = true
-    subscription_cancellation = true
-    subscription_confirmation = true
-    subscription_cycled       = true
-    subscription_past_due     = true
-    subscription_revoked      = true
-    subscription_uncanceled   = true
-    subscription_updated      = true
+    order_confirmation            = true
+    subscription_cancellation     = true
+    subscription_confirmation     = true
+    subscription_cycled           = true
+    subscription_cycled_after_trial = true
+    subscription_past_due         = true
+    subscription_revoked          = true
+    subscription_uncanceled       = true
+    subscription_updated          = true
   }
 }
 `

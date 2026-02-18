@@ -189,30 +189,15 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"id": result.Meter.ID,
 	})
 
-	// Eventual consistency poll — wait for GET to reflect the write.
-	writeTime := latestTimestamp(result.Meter)
-	meter, err := pollForConsistency(ctx, "meter", result.Meter.ID, writeTime, func() (*components.Meter, error) {
-		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
-		if err != nil {
-			return nil, err
-		}
-		return r.Meter, nil
-	}, &resp.Diagnostics)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error waiting for meter visibility",
-			fmt.Sprintf("Meter %s was created but not immediately readable: %s", result.Meter.ID, err),
-		)
-		return
-	}
-
-	mapMeterResponseToState(ctx, meter, &data, &resp.Diagnostics)
+	mapMeterResponseToState(ctx, result.Meter, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(result.Meter), resp.Private)...)
 }
 
 // Read refreshes TF state from the API. Handles two "gone" cases:
 // - 404 Not Found → resource deleted out-of-band
 // - ArchivedAt set → resource was archived (our Delete archives, not deletes)
+// Uses readWithConsistency to poll if a recent Create/Update stored a write timestamp.
 func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data MeterResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -220,28 +205,35 @@ func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	result, err := r.client.Meters.Get(ctx, data.ID.ValueString())
+	id := data.ID.ValueString()
+	meter, err := readWithConsistency(ctx, "meter", id, req.Private, resp.Private, func() (*components.Meter, error) {
+		r, err := r.client.Meters.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return r.Meter, nil
+	}, &resp.Diagnostics)
 	if err != nil {
-		if handleNotFoundRemove(ctx, err, "meter", data.ID.ValueString(), &resp.State) {
+		if handleNotFoundRemove(ctx, err, "meter", id, &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
 			"Error reading meter",
-			fmt.Sprintf("Could not read meter %s: %s", data.ID.ValueString(), err),
+			fmt.Sprintf("Could not read meter %s: %s", id, err),
 		)
 		return
 	}
 
 	// Archived meters are treated as deleted — remove from TF state.
-	if result.Meter.ArchivedAt != nil {
+	if meter.ArchivedAt != nil {
 		tflog.Trace(ctx, "meter is archived, removing from state", map[string]interface{}{
-			"id": data.ID.ValueString(),
+			"id": id,
 		})
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	mapMeterResponseToState(ctx, result.Meter, &data, &resp.Diagnostics)
+	mapMeterResponseToState(ctx, meter, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -281,25 +273,9 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	// Eventual consistency poll.
-	writeTime := latestTimestamp(result.Meter)
-	meter, err := pollForConsistency(ctx, "meter", result.Meter.ID, writeTime, func() (*components.Meter, error) {
-		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
-		if err != nil {
-			return nil, err
-		}
-		return r.Meter, nil
-	}, &resp.Diagnostics)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error reading meter after update",
-			fmt.Sprintf("Could not read meter %s: %s", result.Meter.ID, err),
-		)
-		return
-	}
-
-	mapMeterResponseToState(ctx, meter, &data, &resp.Diagnostics)
+	mapMeterResponseToState(ctx, result.Meter, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(result.Meter), resp.Private)...)
 }
 
 // Delete archives the meter (Polar has no DELETE for meters).

@@ -14,9 +14,9 @@ import (
 )
 
 // timestampedBenefit wraps *components.Benefit (a union type) to satisfy the
-// Timestamped interface. Since each benefit variant (Custom, Discord, etc.) has
-// its own timestamp fields, we switch on the active variant to delegate.
-// This is needed because pollForConsistency requires Timestamped.
+// Timestamped interface. The Polar SDK models benefits as a union of distinct
+// types (BenefitCustom, BenefitDiscord, etc.) rather than a single type with
+// variant properties, so we need this adapter to delegate to the active variant.
 type timestampedBenefit struct{ *components.Benefit }
 
 func (b *timestampedBenefit) GetCreatedAt() time.Time {
