@@ -154,7 +154,9 @@ func mapProductResponseToState(ctx context.Context, product *components.Product,
 	data.Prices = sdkPricesToModel(product.Prices, diags)
 
 	// Map metadata
-	data.Metadata = sdkProductMetadataToMap(ctx, product.Metadata, diags)
+	data.Metadata = sdkMetadataToMap(ctx, product.Metadata, func(v components.ProductMetadata) metadataFields {
+		return metadataFields{Str: v.Str, Integer: v.Integer, Number: v.Number, Boolean: v.Boolean}
+	}, diags)
 
 	// Map benefit_ids — only if the user is managing benefits (non-null in state)
 	if !data.BenefitIDs.IsNull() {
@@ -499,15 +501,6 @@ func sdkProductPriceToModel(price *components.ProductPrice) *PriceModel {
 	default:
 		return nil
 	}
-}
-
-func sdkProductMetadataToMap(ctx context.Context, metadata map[string]components.ProductMetadata, diags *diag.Diagnostics) types.Map {
-	if len(metadata) == 0 {
-		return types.MapNull(types.StringType)
-	}
-	return sdkMetadataToMap(ctx, metadata, func(v components.ProductMetadata) metadataFields {
-		return metadataFields{Str: v.Str, Integer: v.Integer, Number: v.Number, Boolean: v.Boolean}
-	}, diags)
 }
 
 // normalizeDecimalString strips trailing zeros from a decimal string so that

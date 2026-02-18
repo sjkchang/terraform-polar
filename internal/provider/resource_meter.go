@@ -18,7 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go"
-	"github.com/polarsource/polar-go/models/apierrors"
 	"github.com/polarsource/polar-go/models/components"
 )
 
@@ -142,20 +141,9 @@ func (r *MeterResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 }
 
 func (r *MeterResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
+	if pd := extractProviderData(req.ProviderData, &resp.Diagnostics); pd != nil {
+		r.client = pd.Client
 	}
-
-	pd, ok := req.ProviderData.(*PolarProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = pd.Client
 }
 
 func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -172,12 +160,12 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		metadata, diags := metadataModelToCreateSDK(ctx, data.Metadata)
-		resp.Diagnostics.Append(diags...)
+		m, d := metadataToCreateSDK(ctx, data.Metadata, components.CreateMeterCreateMetadataStr)
+		resp.Diagnostics.Append(d...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		createReq.Metadata = metadata
+		createReq.Metadata = m
 	}
 
 	result, err := r.client.Meters.Create(ctx, createReq)
@@ -193,13 +181,14 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"id": result.Meter.ID,
 	})
 
-	meter, err := pollForVisibility(ctx, "meter", result.Meter.ID, func() (*components.Meter, error) {
+	writeTime := latestTimestamp(result.Meter)
+	meter, err := pollForConsistency(ctx, "meter", result.Meter.ID, writeTime, func() (*components.Meter, error) {
 		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
 		if err != nil {
 			return nil, err
 		}
 		return r.Meter, nil
-	}, meterNotArchived)
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for meter visibility",
@@ -221,12 +210,7 @@ func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	result, err := r.client.Meters.Get(ctx, data.ID.ValueString())
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
-			tflog.Trace(ctx, "meter not found, removing from state", map[string]interface{}{
-				"id": data.ID.ValueString(),
-			})
-			resp.State.RemoveResource(ctx)
+		if handleNotFoundRemove(ctx, err, "meter", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
@@ -267,12 +251,12 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		metadata, diags := metadataModelToUpdateSDK(ctx, data.Metadata)
-		resp.Diagnostics.Append(diags...)
+		m, d := metadataToCreateSDK(ctx, data.Metadata, components.CreateMeterUpdateMetadataStr)
+		resp.Diagnostics.Append(d...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		updateReq.Metadata = metadata
+		updateReq.Metadata = m
 	}
 
 	result, err := r.client.Meters.Update(ctx, data.ID.ValueString(), updateReq)
@@ -284,17 +268,18 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	meter, err := pollForVisibility(ctx, "meter", result.Meter.ID, func() (*components.Meter, error) {
+	writeTime := latestTimestamp(result.Meter)
+	meter, err := pollForConsistency(ctx, "meter", result.Meter.ID, writeTime, func() (*components.Meter, error) {
 		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
 		if err != nil {
 			return nil, err
 		}
 		return r.Meter, nil
-	}, meterNotArchived)
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Error waiting for meter visibility",
-			fmt.Sprintf("Meter %s was updated but not immediately readable: %s", result.Meter.ID, err),
+			"Error reading meter after update",
+			fmt.Sprintf("Could not read meter %s: %s", result.Meter.ID, err),
 		)
 		return
 	}
@@ -316,8 +301,7 @@ func (r *MeterResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		IsArchived: &isArchived,
 	})
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
+		if isNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError(
@@ -336,15 +320,6 @@ func (r *MeterResource) ImportState(ctx context.Context, req resource.ImportStat
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// meterNotArchived is an accept function for pollForVisibility that rejects
-// archived meters with a distinct error message.
-func meterNotArchived(m *components.Meter) (bool, string) {
-	if m.ArchivedAt != nil {
-		return false, "resource exists but is archived"
-	}
-	return true, ""
-}
-
 // mapMeterResponseToState maps a Meter API response to the Terraform resource model.
 func mapMeterResponseToState(ctx context.Context, meter *components.Meter, data *MeterResourceModel, diags *diag.Diagnostics) {
 	data.ID = types.StringValue(meter.ID)
@@ -352,9 +327,9 @@ func mapMeterResponseToState(ctx context.Context, meter *components.Meter, data 
 	data.Filter = sdkFilterToModel(meter.Filter, diags)
 	data.Aggregation = sdkAggregationToModel(meter.Aggregation, diags)
 
-	metadataMap, metaDiags := sdkMeterMetadataToMap(ctx, meter.Metadata)
-	diags.Append(metaDiags...)
-	data.Metadata = metadataMap
+	data.Metadata = sdkMetadataToMap(ctx, meter.Metadata, func(v components.MeterMetadata) metadataFields {
+		return metadataFields{Str: v.Str, Integer: v.Integer, Number: v.Number, Boolean: v.Boolean}
+	}, diags)
 }
 
 // --- SDK conversion helpers ---
@@ -506,48 +481,3 @@ func sdkAggregationToModel(agg components.MeterAggregation, diags *diag.Diagnost
 	return model
 }
 
-func metadataModelToCreateSDK(ctx context.Context, metadata types.Map) (map[string]components.MeterCreateMetadata, diag.Diagnostics) {
-	var stringMap map[string]string
-	diags := metadata.ElementsAs(ctx, &stringMap, false)
-	if diags.HasError() {
-		return nil, diags
-	}
-	result := make(map[string]components.MeterCreateMetadata, len(stringMap))
-	for k, v := range stringMap {
-		result[k] = components.CreateMeterCreateMetadataStr(v)
-	}
-	return result, diags
-}
-
-func metadataModelToUpdateSDK(ctx context.Context, metadata types.Map) (map[string]components.MeterUpdateMetadata, diag.Diagnostics) {
-	var stringMap map[string]string
-	diags := metadata.ElementsAs(ctx, &stringMap, false)
-	if diags.HasError() {
-		return nil, diags
-	}
-	result := make(map[string]components.MeterUpdateMetadata, len(stringMap))
-	for k, v := range stringMap {
-		result[k] = components.CreateMeterUpdateMetadataStr(v)
-	}
-	return result, diags
-}
-
-func sdkMeterMetadataToMap(ctx context.Context, metadata map[string]components.MeterMetadata) (types.Map, diag.Diagnostics) {
-	if len(metadata) == 0 {
-		return types.MapNull(types.StringType), nil
-	}
-	stringMap := make(map[string]string, len(metadata))
-	for k, v := range metadata {
-		switch {
-		case v.Str != nil:
-			stringMap[k] = *v.Str
-		case v.Integer != nil:
-			stringMap[k] = strconv.FormatInt(*v.Integer, 10)
-		case v.Number != nil:
-			stringMap[k] = strconv.FormatFloat(*v.Number, 'f', -1, 64)
-		case v.Boolean != nil:
-			stringMap[k] = strconv.FormatBool(*v.Boolean)
-		}
-	}
-	return types.MapValueFrom(ctx, types.StringType, stringMap)
-}

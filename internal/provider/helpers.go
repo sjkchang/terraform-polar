@@ -8,9 +8,29 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go/models/apierrors"
 )
+
+// Timestamped is satisfied by any Polar API resource that exposes
+// created_at / modified_at timestamps (Product, Meter, WebhookEndpoint, Organization, etc.).
+type Timestamped interface {
+	GetCreatedAt() time.Time
+	GetModifiedAt() *time.Time
+}
+
+// latestTimestamp returns ModifiedAt if present, otherwise CreatedAt.
+// Used to extract the write timestamp from Create/Update responses and to
+// compare against read-back responses during consistency polling.
+func latestTimestamp(t Timestamped) time.Time {
+	if mod := t.GetModifiedAt(); mod != nil {
+		return *mod
+	}
+	return t.GetCreatedAt()
+}
 
 // Polling constants for eventual consistency handling.
 const (
@@ -19,8 +39,38 @@ const (
 )
 
 // isNotFound checks if an error is a Polar API 404 ResourceNotFound error.
-func isNotFound(err error, target **apierrors.ResourceNotFound) bool {
-	return errors.As(err, target)
+func isNotFound(err error) bool {
+	var notFound *apierrors.ResourceNotFound
+	return errors.As(err, &notFound)
+}
+
+// extractProviderData extracts the *PolarProviderData from provider configuration.
+// Returns nil without error when providerData is nil (early provider lifecycle).
+func extractProviderData(providerData any, diags *diag.Diagnostics) *PolarProviderData {
+	if providerData == nil {
+		return nil
+	}
+	pd, ok := providerData.(*PolarProviderData)
+	if !ok {
+		diags.AddError(
+			"Unexpected Configure Type",
+			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", providerData),
+		)
+		return nil
+	}
+	return pd
+}
+
+// handleNotFoundRemove checks if err is a 404 ResourceNotFound error and, if so,
+// logs it and removes the resource from Terraform state. Returns true if the error
+// was a 404 (caller should return early), false otherwise.
+func handleNotFoundRemove(ctx context.Context, err error, resourceType, id string, state *tfsdk.State) bool {
+	if !isNotFound(err) {
+		return false
+	}
+	tflog.Trace(ctx, resourceType+" not found, removing from state", map[string]interface{}{"id": id})
+	state.RemoveResource(ctx)
+	return true
 }
 
 // optionalStringValue safely converts a *string to types.String,
@@ -49,41 +99,66 @@ func derefBool(b *bool) bool {
 	return *b
 }
 
-// pollForVisibility polls fetch until it returns a result accepted by the
-// accept function. If accept is nil, any successful fetch is accepted.
-// When accept returns false, the reason string is included in the final
-// error message if polling exhausts all attempts.
-// Retries on ResourceNotFound errors. Respects context cancellation.
-func pollForVisibility[T any](ctx context.Context, resourceType string, id string, fetch func() (*T, error), accept func(*T) (bool, string)) (*T, error) {
+// pollForConsistency polls fetch until it returns a result whose timestamp is
+// at or after writeTimestamp. Retries on ResourceNotFound and stale-read
+// errors. If polling exhausts all attempts and at least one successful read
+// was obtained, the last result is returned with a warning diagnostic. If no
+// successful read was ever obtained (e.g. persistent 404), a hard error is returned.
+func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id string, writeTimestamp time.Time, fetch func() (T, error), diags *diag.Diagnostics) (T, error) {
+	var last T
+	var hasResult bool
 	var lastRejectReason string
+
 	for i := 0; i < pollMaxAttempts; i++ {
 		if i > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				var zero T
+				return zero, ctx.Err()
 			case <-time.After(pollInterval):
 			}
 		}
 		result, err := fetch()
 		if err != nil {
-			var notFound *apierrors.ResourceNotFound
-			if isNotFound(err, &notFound) {
+			if isNotFound(err) {
+				lastRejectReason = "resource not found"
 				continue
 			}
-			return nil, err
+			var zero T
+			return zero, err
 		}
-		if accept != nil {
-			ok, reason := accept(result)
-			if !ok {
-				lastRejectReason = reason
-				continue
-			}
+		last = result
+		hasResult = true
+		if latestTimestamp(result).Before(writeTimestamp) {
+			lastRejectReason = "stale read (timestamp before write)"
+			continue
 		}
+		tflog.Trace(ctx, "read-after-write consistent", map[string]interface{}{
+			"resource": resourceType,
+			"id":       id,
+			"polls":    i + 1,
+		})
 		return result, nil
 	}
-	msg := fmt.Sprintf("%s %s not visible after polling", resourceType, id)
-	if lastRejectReason != "" {
-		msg += ": " + lastRejectReason
+
+	// If we never got a successful read, return a hard error.
+	if !hasResult {
+		var zero T
+		msg := fmt.Sprintf("%s %s not readable after %d polls", resourceType, id, pollMaxAttempts)
+		if lastRejectReason != "" {
+			msg += ": " + lastRejectReason
+		}
+		return zero, fmt.Errorf("%s", msg)
 	}
-	return nil, fmt.Errorf("%s", msg)
+
+	// We got at least one read but it was stale — return it with a warning.
+	diags.AddWarning(
+		"Eventual consistency timeout",
+		fmt.Sprintf(
+			"%s %s read-back did not converge after %d polls (%s). "+
+				"The state may not reflect the latest changes. Run terraform refresh to re-sync.",
+			resourceType, id, pollMaxAttempts, lastRejectReason,
+		),
+	)
+	return last, nil
 }

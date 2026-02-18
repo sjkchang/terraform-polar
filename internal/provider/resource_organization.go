@@ -6,10 +6,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -255,20 +253,9 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 }
 
 func (r *OrganizationResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
+	if pd := extractProviderData(req.ProviderData, &resp.Diagnostics); pd != nil {
+		r.provider = pd
 	}
-
-	pd, ok := req.ProviderData.(*PolarProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-		return
-	}
-
-	r.provider = pd
 }
 
 func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -296,7 +283,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	_, err = r.provider.Client.Organizations.Update(ctx, org.ID, *update)
+	updateResult, err := r.provider.Client.Organizations.Update(ctx, org.ID, *update)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating organization",
@@ -304,6 +291,8 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		)
 		return
 	}
+
+	writeTime := latestTimestamp(updateResult.Organization)
 
 	// Supplemental raw HTTP for subscription_settings (SDK missing prevent_trial_abuse)
 	if data.SubscriptionSettings != nil {
@@ -318,7 +307,13 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	// Poll until the read-back matches planned values (eventual consistency)
-	consistent, err := r.waitForReadConsistency(ctx, org.ID, &data, &resp.Diagnostics)
+	consistent, err := pollForConsistency(ctx, "organization", org.ID, writeTime, func() (*components.Organization, error) {
+		result, err := r.provider.Client.Organizations.Get(ctx, org.ID)
+		if err != nil {
+			return nil, err
+		}
+		return result.Organization, nil
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading organization after update",
@@ -376,7 +371,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	_, err := r.provider.Client.Organizations.Update(ctx, data.ID.ValueString(), *update)
+	updateResult, err := r.provider.Client.Organizations.Update(ctx, data.ID.ValueString(), *update)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating organization",
@@ -384,6 +379,8 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		)
 		return
 	}
+
+	writeTime := latestTimestamp(updateResult.Organization)
 
 	// Supplemental raw HTTP for subscription_settings (SDK missing prevent_trial_abuse)
 	if data.SubscriptionSettings != nil {
@@ -398,7 +395,13 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	// Poll until the read-back matches planned values (eventual consistency)
-	consistent, err := r.waitForReadConsistency(ctx, data.ID.ValueString(), &data, &resp.Diagnostics)
+	consistent, err := pollForConsistency(ctx, "organization", data.ID.ValueString(), writeTime, func() (*components.Organization, error) {
+		result, err := r.provider.Client.Organizations.Get(ctx, data.ID.ValueString())
+		if err != nil {
+			return nil, err
+		}
+		return result.Organization, nil
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading organization after update",
@@ -420,79 +423,6 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *OrganizationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-// waitForReadConsistency polls Organizations.Get until the response matches
-// the planned values, handling eventual consistency after writes. Returns the
-// first consistent response. If consistency is not reached after polling,
-// returns the last response and emits a warning diagnostic.
-func (r *OrganizationResource) waitForReadConsistency(ctx context.Context, orgID string, planned *OrganizationResourceModel, diags *diag.Diagnostics) (*components.Organization, error) {
-	var lastOrg *components.Organization
-
-	for i := 0; i < pollMaxAttempts; i++ {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(pollInterval):
-			}
-		}
-
-		result, err := r.provider.Client.Organizations.Get(ctx, orgID)
-		if err != nil {
-			return nil, err
-		}
-		lastOrg = result.Organization
-
-		if r.isConsistent(lastOrg, planned) {
-			tflog.Trace(ctx, "read-after-write consistent", map[string]interface{}{
-				"polls": i + 1,
-			})
-			return lastOrg, nil
-		}
-	}
-
-	tflog.Warn(ctx, "read-after-write consistency not reached, using last response", map[string]interface{}{
-		"polls": pollMaxAttempts,
-	})
-	diags.AddWarning(
-		"Eventual consistency timeout",
-		fmt.Sprintf(
-			"Organization %s read-back did not match planned values after %d polls. "+
-				"The state may not reflect the latest changes. Run terraform refresh to re-sync.",
-			orgID, pollMaxAttempts,
-		),
-	)
-	return lastOrg, nil
-}
-
-// isConsistent checks whether the API response matches the user-configured
-// planned values for fields that may be subject to eventual consistency.
-func (r *OrganizationResource) isConsistent(org *components.Organization, planned *OrganizationResourceModel) bool {
-	if !planned.Name.IsNull() && org.Name != planned.Name.ValueString() {
-		return false
-	}
-	if planned.FeatureSettings != nil && org.FeatureSettings != nil {
-		if derefBool(org.FeatureSettings.IssueFundingEnabled) != planned.FeatureSettings.IssueFundingEnabled.ValueBool() {
-			return false
-		}
-	}
-	if planned.SubscriptionSettings != nil {
-		if string(org.SubscriptionSettings.ProrationBehavior) != planned.SubscriptionSettings.ProrationBehavior.ValueString() {
-			return false
-		}
-	}
-	if planned.NotificationSettings != nil {
-		if org.NotificationSettings.NewOrder != planned.NotificationSettings.NewOrder.ValueBool() {
-			return false
-		}
-	}
-	if planned.CustomerEmailSettings != nil {
-		if org.CustomerEmailSettings.OrderConfirmation != planned.CustomerEmailSettings.OrderConfirmation.ValueBool() {
-			return false
-		}
-	}
-	return true
 }
 
 // preserveURLFormatting keeps the user's URL formatting when the API response

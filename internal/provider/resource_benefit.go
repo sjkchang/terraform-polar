@@ -16,8 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go"
-	"github.com/polarsource/polar-go/models/apierrors"
-	"github.com/polarsource/polar-go/models/components"
 )
 
 var _ resource.Resource = &BenefitResource{}
@@ -271,20 +269,9 @@ func (r *BenefitResource) Schema(ctx context.Context, req resource.SchemaRequest
 }
 
 func (r *BenefitResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
+	if pd := extractProviderData(req.ProviderData, &resp.Diagnostics); pd != nil {
+		r.client = pd.Client
 	}
-
-	pd, ok := req.ProviderData.(*PolarProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = pd.Client
 }
 
 func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -320,13 +307,14 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	benefitID := data.ID.ValueString()
-	benefit, err := pollForVisibility(ctx, "benefit", benefitID, func() (*components.Benefit, error) {
+	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
+	wrappedBenefit, err := pollForConsistency(ctx, "benefit", benefitID, writeTime, func() (*timestampedBenefit, error) {
 		result, err := r.client.Benefits.Get(ctx, benefitID)
 		if err != nil {
 			return nil, err
 		}
-		return result.Benefit, nil
-	}, nil)
+		return &timestampedBenefit{result.Benefit}, nil
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for benefit visibility",
@@ -335,7 +323,7 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	mapBenefitResponseToState(ctx, benefit, &data, &resp.Diagnostics)
+	mapBenefitResponseToState(ctx, wrappedBenefit.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -348,12 +336,7 @@ func (r *BenefitResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	result, err := r.client.Benefits.Get(ctx, data.ID.ValueString())
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
-			tflog.Trace(ctx, "benefit not found, removing from state", map[string]interface{}{
-				"id": data.ID.ValueString(),
-			})
-			resp.State.RemoveResource(ctx)
+		if handleNotFoundRemove(ctx, err, "benefit", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
@@ -389,25 +372,24 @@ func (r *BenefitResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	_ = result // Update succeeded; poll for read consistency
-
 	benefitID := data.ID.ValueString()
-	benefit, err := pollForVisibility(ctx, "benefit", benefitID, func() (*components.Benefit, error) {
+	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
+	wrappedBenefit, err := pollForConsistency(ctx, "benefit", benefitID, writeTime, func() (*timestampedBenefit, error) {
 		result, err := r.client.Benefits.Get(ctx, benefitID)
 		if err != nil {
 			return nil, err
 		}
-		return result.Benefit, nil
-	}, nil)
+		return &timestampedBenefit{result.Benefit}, nil
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Error waiting for benefit visibility",
-			fmt.Sprintf("Benefit %s was updated but not immediately readable: %s", benefitID, err),
+			"Error reading benefit after update",
+			fmt.Sprintf("Could not read benefit %s: %s", benefitID, err),
 		)
 		return
 	}
 
-	mapBenefitResponseToState(ctx, benefit, &data, &resp.Diagnostics)
+	mapBenefitResponseToState(ctx, wrappedBenefit.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -420,8 +402,7 @@ func (r *BenefitResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 	_, err := r.client.Benefits.Delete(ctx, data.ID.ValueString())
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
+		if isNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError(

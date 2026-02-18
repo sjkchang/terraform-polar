@@ -17,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go"
-	"github.com/polarsource/polar-go/models/apierrors"
 	"github.com/polarsource/polar-go/models/components"
 )
 
@@ -179,20 +178,9 @@ func (r *ProductResource) Schema(ctx context.Context, req resource.SchemaRequest
 }
 
 func (r *ProductResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
+	if pd := extractProviderData(req.ProviderData, &resp.Diagnostics); pd != nil {
+		r.client = pd.Client
 	}
-
-	pd, ok := req.ProviderData.(*PolarProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = pd.Client
 }
 
 func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -248,13 +236,14 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		}
 	}
 
-	product, err := pollForVisibility(ctx, "product", result.Product.ID, func() (*components.Product, error) {
+	writeTime := latestTimestamp(result.Product)
+	product, err := pollForConsistency(ctx, "product", result.Product.ID, writeTime, func() (*components.Product, error) {
 		r, err := r.client.Products.Get(ctx, result.Product.ID)
 		if err != nil {
 			return nil, err
 		}
 		return r.Product, nil
-	}, nil)
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for product visibility",
@@ -279,12 +268,7 @@ func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, re
 	priorPrices := data.Prices
 	result, err := r.client.Products.Get(ctx, data.ID.ValueString())
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
-			tflog.Trace(ctx, "product not found, removing from state", map[string]interface{}{
-				"id": data.ID.ValueString(),
-			})
-			resp.State.RemoveResource(ctx)
+		if handleNotFoundRemove(ctx, err, "product", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
@@ -332,7 +316,7 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 
 	plannedPrices := data.Prices
-	_, err = r.client.Products.Update(ctx, data.ID.ValueString(), *updateReq)
+	updateResult, err := r.client.Products.Update(ctx, data.ID.ValueString(), *updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating product",
@@ -340,6 +324,8 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 		)
 		return
 	}
+
+	writeTime := latestTimestamp(updateResult.Product)
 
 	// Update benefits if configured
 	if !data.BenefitIDs.IsNull() {
@@ -360,17 +346,17 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 
 	productID := data.ID.ValueString()
-	product, err := pollForVisibility(ctx, "product", productID, func() (*components.Product, error) {
+	product, err := pollForConsistency(ctx, "product", productID, writeTime, func() (*components.Product, error) {
 		r, err := r.client.Products.Get(ctx, productID)
 		if err != nil {
 			return nil, err
 		}
 		return r.Product, nil
-	}, nil)
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Error waiting for product visibility",
-			fmt.Sprintf("Product %s was updated but not immediately readable: %s", productID, err),
+			"Error reading product after update",
+			fmt.Sprintf("Could not read product %s: %s", productID, err),
 		)
 		return
 	}
@@ -393,8 +379,7 @@ func (r *ProductResource) Delete(ctx context.Context, req resource.DeleteRequest
 		IsArchived: &isArchived,
 	})
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
+		if isNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError(

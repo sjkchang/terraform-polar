@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/polarsource/polar-go"
-	"github.com/polarsource/polar-go/models/apierrors"
 )
 
 var _ datasource.DataSource = &BenefitDataSource{}
@@ -178,20 +177,9 @@ func (d *BenefitDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 }
 
 func (d *BenefitDataSource) Configure(ctx context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
+	if pd := extractProviderData(req.ProviderData, &resp.Diagnostics); pd != nil {
+		d.client = pd.Client
 	}
-
-	pd, ok := req.ProviderData.(*PolarProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-		return
-	}
-
-	d.client = pd.Client
 }
 
 func (d *BenefitDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -203,8 +191,7 @@ func (d *BenefitDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 	result, err := d.client.Benefits.Get(ctx, data.ID.ValueString())
 	if err != nil {
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
+		if isNotFound(err) {
 			resp.Diagnostics.AddError(
 				"Benefit not found",
 				fmt.Sprintf("No benefit found with ID %s.", data.ID.ValueString()),

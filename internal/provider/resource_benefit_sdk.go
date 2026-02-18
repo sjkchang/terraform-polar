@@ -5,12 +5,53 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/polarsource/polar-go/models/components"
 	"github.com/polarsource/polar-go/models/operations"
 )
+
+// timestampedBenefit wraps *components.Benefit to satisfy the Timestamped
+// interface by delegating to the active union variant's timestamp methods.
+type timestampedBenefit struct{ *components.Benefit }
+
+func (b *timestampedBenefit) GetCreatedAt() time.Time {
+	switch {
+	case b.BenefitCustom != nil:
+		return b.BenefitCustom.GetCreatedAt()
+	case b.BenefitDiscord != nil:
+		return b.BenefitDiscord.GetCreatedAt()
+	case b.BenefitGitHubRepository != nil:
+		return b.BenefitGitHubRepository.GetCreatedAt()
+	case b.BenefitDownloadables != nil:
+		return b.BenefitDownloadables.GetCreatedAt()
+	case b.BenefitLicenseKeys != nil:
+		return b.BenefitLicenseKeys.GetCreatedAt()
+	case b.BenefitMeterCredit != nil:
+		return b.BenefitMeterCredit.GetCreatedAt()
+	}
+	return time.Time{}
+}
+
+func (b *timestampedBenefit) GetModifiedAt() *time.Time {
+	switch {
+	case b.BenefitCustom != nil:
+		return b.BenefitCustom.GetModifiedAt()
+	case b.BenefitDiscord != nil:
+		return b.BenefitDiscord.GetModifiedAt()
+	case b.BenefitGitHubRepository != nil:
+		return b.BenefitGitHubRepository.GetModifiedAt()
+	case b.BenefitDownloadables != nil:
+		return b.BenefitDownloadables.GetModifiedAt()
+	case b.BenefitLicenseKeys != nil:
+		return b.BenefitLicenseKeys.GetModifiedAt()
+	case b.BenefitMeterCredit != nil:
+		return b.BenefitMeterCredit.GetModifiedAt()
+	}
+	return nil
+}
 
 // --- Build SDK Create request ---
 

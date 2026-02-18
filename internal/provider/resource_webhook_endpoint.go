@@ -20,7 +20,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/polarsource/polar-go"
-	"github.com/polarsource/polar-go/models/apierrors"
 	"github.com/polarsource/polar-go/models/components"
 )
 
@@ -101,20 +100,9 @@ func (r *WebhookEndpointResource) Schema(ctx context.Context, req resource.Schem
 }
 
 func (r *WebhookEndpointResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
+	if pd := extractProviderData(req.ProviderData, &resp.Diagnostics); pd != nil {
+		r.client = pd.Client
 	}
-
-	pd, ok := req.ProviderData.(*PolarProviderData)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *PolarProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = pd.Client
 }
 
 func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -175,13 +163,14 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 	}
 
 	// Poll for visibility, then map response to state
-	webhook, err := pollForVisibility(ctx, "webhook endpoint", endpoint.ID, func() (*components.WebhookEndpoint, error) {
+	writeTime := latestTimestamp(endpoint)
+	webhook, err := pollForConsistency(ctx, "webhook endpoint", endpoint.ID, writeTime, func() (*components.WebhookEndpoint, error) {
 		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, endpoint.ID)
 		if err != nil {
 			return nil, err
 		}
 		return result.WebhookEndpoint, nil
-	}, nil)
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for webhook endpoint visibility",
@@ -203,13 +192,7 @@ func (r *WebhookEndpointResource) Read(ctx context.Context, req resource.ReadReq
 
 	result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, data.ID.ValueString())
 	if err != nil {
-		// If the resource no longer exists, remove it from state
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
-			tflog.Trace(ctx, "webhook endpoint not found, removing from state", map[string]interface{}{
-				"id": data.ID.ValueString(),
-			})
-			resp.State.RemoveResource(ctx)
+		if handleNotFoundRemove(ctx, err, "webhook endpoint", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
@@ -253,7 +236,7 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		Enabled: &enabled,
 	}
 
-	_, err := r.client.Webhooks.UpdateWebhookEndpoint(ctx, data.ID.ValueString(), updateReq)
+	updateResult, err := r.client.Webhooks.UpdateWebhookEndpoint(ctx, data.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating webhook endpoint",
@@ -263,17 +246,18 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 	}
 
 	webhookID := data.ID.ValueString()
-	webhook, err := pollForVisibility(ctx, "webhook endpoint", webhookID, func() (*components.WebhookEndpoint, error) {
+	writeTime := latestTimestamp(updateResult.WebhookEndpoint)
+	webhook, err := pollForConsistency(ctx, "webhook endpoint", webhookID, writeTime, func() (*components.WebhookEndpoint, error) {
 		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, webhookID)
 		if err != nil {
 			return nil, err
 		}
 		return result.WebhookEndpoint, nil
-	}, nil)
+	}, &resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Error waiting for webhook endpoint visibility",
-			fmt.Sprintf("Webhook endpoint %s was updated but not immediately readable: %s", webhookID, err),
+			"Error reading webhook endpoint after update",
+			fmt.Sprintf("Could not read webhook endpoint %s: %s", webhookID, err),
 		)
 		return
 	}
@@ -292,8 +276,7 @@ func (r *WebhookEndpointResource) Delete(ctx context.Context, req resource.Delet
 	_, err := r.client.Webhooks.DeleteWebhookEndpoint(ctx, data.ID.ValueString())
 	if err != nil {
 		// If already deleted, that's fine
-		var notFound *apierrors.ResourceNotFound
-		if isNotFound(err, &notFound) {
+		if isNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError(
