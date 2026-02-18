@@ -61,6 +61,21 @@ func TestNormalizeDecimalString(t *testing.T) {
 	}
 }
 
+// meteredPrice builds a metered_unit PriceModel for testing.
+func meteredPrice(meterID, unitAmount string) PriceModel {
+	return PriceModel{
+		AmountType:    types.StringValue("metered_unit"),
+		MeterID:       types.StringValue(meterID),
+		UnitAmount:    types.StringValue(unitAmount),
+		PriceCurrency: types.StringNull(),
+		PriceAmount:   types.Int64Null(),
+		MinimumAmount: types.Int64Null(),
+		MaximumAmount: types.Int64Null(),
+		PresetAmount:  types.Int64Null(),
+		CapAmount:     types.Int64Null(),
+	}
+}
+
 func TestPreserveUnitAmountFormatting(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -90,8 +105,8 @@ func TestPreserveUnitAmountFormatting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prices := []PriceModel{{UnitAmount: typesStringValue(tt.current)}}
-			priors := []PriceModel{{UnitAmount: typesStringValue(tt.prior)}}
+			prices := []PriceModel{meteredPrice("m1", tt.current)}
+			priors := []PriceModel{meteredPrice("m1", tt.prior)}
 			preserveUnitAmountFormatting(prices, priors)
 			got := prices[0].UnitAmount.ValueString()
 			if got != tt.wantResult {
@@ -102,9 +117,15 @@ func TestPreserveUnitAmountFormatting(t *testing.T) {
 }
 
 func TestPreserveUnitAmountFormatting_nullHandling(t *testing.T) {
-	// Should not panic when UnitAmount is null
-	prices := []PriceModel{{UnitAmount: typesStringNull()}}
-	priors := []PriceModel{{UnitAmount: typesStringNull()}}
+	// Non-metered prices have null UnitAmount — should not panic
+	prices := []PriceModel{{
+		AmountType: types.StringValue("free"),
+		UnitAmount: typesStringNull(),
+	}}
+	priors := []PriceModel{{
+		AmountType: types.StringValue("free"),
+		UnitAmount: typesStringNull(),
+	}}
 	preserveUnitAmountFormatting(prices, priors)
 
 	if !prices[0].UnitAmount.IsNull() {
@@ -113,13 +134,13 @@ func TestPreserveUnitAmountFormatting_nullHandling(t *testing.T) {
 }
 
 func TestPreserveUnitAmountFormatting_lengthMismatch(t *testing.T) {
-	// Fewer priors than current — should not panic
+	// Fewer priors than current — extra price should be untouched
 	prices := []PriceModel{
-		{UnitAmount: typesStringValue("0.5")},
-		{UnitAmount: typesStringValue("1.0")},
+		meteredPrice("m1", "0.5"),
+		meteredPrice("m2", "1.0"),
 	}
 	priors := []PriceModel{
-		{UnitAmount: typesStringValue("0.50")},
+		meteredPrice("m1", "0.50"),
 	}
 	preserveUnitAmountFormatting(prices, priors)
 
@@ -128,5 +149,25 @@ func TestPreserveUnitAmountFormatting_lengthMismatch(t *testing.T) {
 	}
 	if prices[1].UnitAmount.ValueString() != "1.0" {
 		t.Errorf("second price: got %q, want %q (should be untouched)", prices[1].UnitAmount.ValueString(), "1.0")
+	}
+}
+
+func TestPreserveUnitAmountFormatting_reorder(t *testing.T) {
+	// Prices reordered vs prior state — should match by content, not index
+	prices := []PriceModel{
+		meteredPrice("m2", "1"),
+		meteredPrice("m1", "0.5"),
+	}
+	priors := []PriceModel{
+		meteredPrice("m1", "0.50"),
+		meteredPrice("m2", "1.00"),
+	}
+	preserveUnitAmountFormatting(prices, priors)
+
+	if got := prices[0].UnitAmount.ValueString(); got != "1.00" {
+		t.Errorf("first price (m2): got %q, want %q", got, "1.00")
+	}
+	if got := prices[1].UnitAmount.ValueString(); got != "0.50" {
+		t.Errorf("second price (m1): got %q, want %q", got, "0.50")
 	}
 }
