@@ -22,13 +22,18 @@ type MeterDataSource struct {
 	client *polargo.Polar
 }
 
+type MeterDataSourceModel struct {
+	ID   types.String `tfsdk:"id"`
+	Name types.String `tfsdk:"name"`
+}
+
 func (d *MeterDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_meter"
 }
 
 func (d *MeterDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Fetches a Polar meter by ID.",
+		MarkdownDescription: "Looks up a Polar meter by ID. Use this to reference an unmanaged meter from a metered-unit price or meter-credit benefit.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -38,55 +43,6 @@ func (d *MeterDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the meter.",
 				Computed:            true,
-			},
-			"filter": schema.SingleNestedAttribute{
-				MarkdownDescription: "Filter applied on incoming events.",
-				Computed:            true,
-				Attributes: map[string]schema.Attribute{
-					"conjunction": schema.StringAttribute{
-						MarkdownDescription: "Logical conjunction for combining clauses.",
-						Computed:            true,
-					},
-					"clauses": schema.ListNestedAttribute{
-						MarkdownDescription: "List of filter clauses.",
-						Computed:            true,
-						NestedObject: schema.NestedAttributeObject{
-							Attributes: map[string]schema.Attribute{
-								"property": schema.StringAttribute{
-									MarkdownDescription: "The event property to filter on.",
-									Computed:            true,
-								},
-								"operator": schema.StringAttribute{
-									MarkdownDescription: "The comparison operator.",
-									Computed:            true,
-								},
-								"value": schema.StringAttribute{
-									MarkdownDescription: "The value to compare against.",
-									Computed:            true,
-								},
-							},
-						},
-					},
-				},
-			},
-			"aggregation": schema.SingleNestedAttribute{
-				MarkdownDescription: "Aggregation function for the meter.",
-				Computed:            true,
-				Attributes: map[string]schema.Attribute{
-					"func": schema.StringAttribute{
-						MarkdownDescription: "The aggregation function.",
-						Computed:            true,
-					},
-					"property": schema.StringAttribute{
-						MarkdownDescription: "The event property to aggregate.",
-						Computed:            true,
-					},
-				},
-			},
-			"metadata": schema.MapAttribute{
-				MarkdownDescription: "Key-value metadata.",
-				Computed:            true,
-				ElementType:         types.StringType,
 			},
 		},
 	}
@@ -99,7 +55,7 @@ func (d *MeterDataSource) Configure(ctx context.Context, req datasource.Configur
 }
 
 func (d *MeterDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var data MeterResourceModel
+	var data MeterDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -121,6 +77,7 @@ func (d *MeterDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	mapMeterResponseToState(ctx, result.Meter, &data, &resp.Diagnostics)
+	data.ID = types.StringValue(result.Meter.ID)
+	data.Name = types.StringValue(result.Meter.Name)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

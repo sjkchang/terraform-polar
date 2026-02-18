@@ -4,15 +4,17 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	polargo "github.com/polarsource/polar-go"
 	"github.com/polarsource/polar-go/retry"
 )
@@ -40,6 +42,27 @@ type PolarProviderData struct {
 	Client      *polargo.Polar
 	AccessToken string
 	ServerURL   string
+
+	// orgOnce guards singleton enforcement for polar_organization.
+	orgOnce sync.Once
+	orgID   string
+	orgErr  error
+}
+
+// ClaimOrganization enforces that at most one polar_organization resource
+// exists per provider. The first call succeeds and records the org ID;
+// subsequent calls with a different ID return an error.
+func (pd *PolarProviderData) ClaimOrganization(id string) error {
+	pd.orgOnce.Do(func() {
+		pd.orgID = id
+	})
+	if pd.orgID != id {
+		return fmt.Errorf(
+			"only one polar_organization resource is allowed per provider (already managing %s)",
+			pd.orgID,
+		)
+	}
+	return nil
 }
 
 func (p *PolarProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -166,7 +189,6 @@ func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.Dat
 	return []func() datasource.DataSource{
 		NewMeterDataSource,
 		NewBenefitDataSource,
-		NewOrganizationDataSource,
 	}
 }
 

@@ -277,6 +277,14 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	if err := r.provider.ClaimOrganization(org.ID); err != nil {
+		resp.Diagnostics.AddError(
+			"Duplicate organization resource",
+			err.Error(),
+		)
+		return
+	}
+
 	update, diags := buildOrganizationUpdate(ctx, &data)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {

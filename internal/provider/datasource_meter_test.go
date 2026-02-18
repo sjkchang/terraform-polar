@@ -27,16 +27,6 @@ func TestAccMeterDataSource_basic(t *testing.T) {
 						tfjsonpath.New("name"),
 						knownvalue.StringExact(rName),
 					),
-					statecheck.ExpectKnownValue(
-						"data.polar_meter.test",
-						tfjsonpath.New("filter").AtMapKey("conjunction"),
-						knownvalue.StringExact("and"),
-					),
-					statecheck.ExpectKnownValue(
-						"data.polar_meter.test",
-						tfjsonpath.New("aggregation").AtMapKey("func"),
-						knownvalue.StringExact("count"),
-					),
 				},
 			},
 		},
