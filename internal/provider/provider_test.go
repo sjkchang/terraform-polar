@@ -18,8 +18,11 @@ var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServe
 }
 
 func testAccPreCheck(t *testing.T) {
-	// Ensure the POLAR_ACCESS_TOKEN environment variable is set before running acceptance tests.
 	if os.Getenv("POLAR_ACCESS_TOKEN") == "" {
 		t.Fatal("POLAR_ACCESS_TOKEN must be set for acceptance tests")
+	}
+	// Default to sandbox for acceptance tests if not explicitly set.
+	if os.Getenv("POLAR_SERVER") == "" {
+		t.Setenv("POLAR_SERVER", "sandbox")
 	}
 }

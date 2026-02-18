@@ -57,7 +57,7 @@ func (p *PolarProvider) Schema(ctx context.Context, req provider.SchemaRequest, 
 				Sensitive:           true,
 			},
 			"server": schema.StringAttribute{
-				MarkdownDescription: "The Polar environment to use. Must be `production` or `sandbox`. Defaults to `sandbox`.",
+				MarkdownDescription: "The Polar environment to use. Must be `production` or `sandbox`. Can also be set with the `POLAR_SERVER` environment variable.",
 				Optional:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf("production", "sandbox"),
@@ -96,9 +96,29 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		polargo.WithSecurity(accessToken),
 	}
 
-	// Default to sandbox; use production if explicitly set
+	// Resolve server: config value takes precedence over env var
+	serverStr := data.Server.ValueString()
+	if serverStr == "" {
+		serverStr = os.Getenv("POLAR_SERVER")
+	}
+	if serverStr == "" {
+		resp.Diagnostics.AddError(
+			"Missing Polar Server",
+			"The provider requires a server environment (`production` or `sandbox`). "+
+				"Set it in the provider configuration or via the POLAR_SERVER environment variable.",
+		)
+		return
+	}
+	if serverStr != "production" && serverStr != "sandbox" {
+		resp.Diagnostics.AddError(
+			"Invalid Polar Server",
+			"The server must be `production` or `sandbox`, got: "+serverStr,
+		)
+		return
+	}
+
 	server := polargo.ServerSandbox
-	if !data.Server.IsNull() && !data.Server.IsUnknown() && data.Server.ValueString() == "production" {
+	if serverStr == "production" {
 		server = polargo.ServerProduction
 	}
 	opts = append(opts, polargo.WithServer(server))
