@@ -10,7 +10,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// metadataFields holds the union value pointers common to all SDK metadata types.
+// --- Metadata conversion ---
+// Terraform stores metadata as map[string]string (all values are strings).
+// The Polar SDK uses typed union values (string | int | float | bool) per key.
+// These helpers bridge the two representations.
+
+// metadataFields is a common shape to extract union values from any SDK metadata type.
 type metadataFields struct {
 	Str     *string
 	Integer *int64
@@ -18,8 +23,8 @@ type metadataFields struct {
 	Boolean *bool
 }
 
-// metadataToCreateSDK converts a Terraform types.Map (string values) to an SDK metadata map.
-// The factory function creates the type-specific SDK metadata value from a string.
+// metadataToCreateSDK converts TF map[string]string → SDK metadata map.
+// The factory creates the type-specific SDK union variant from a string value.
 func metadataToCreateSDK[T any](ctx context.Context, metadata types.Map, factory func(string) T) (map[string]T, diag.Diagnostics) {
 	var stringMap map[string]string
 	diags := metadata.ElementsAs(ctx, &stringMap, false)
@@ -33,11 +38,15 @@ func metadataToCreateSDK[T any](ctx context.Context, metadata types.Map, factory
 	return result, diags
 }
 
-// sdkMetadataToMap converts an SDK metadata map back to a Terraform types.Map.
-// The extract function pulls the union value pointers from the type-specific SDK metadata.
+// sdkMetadataToMap converts SDK metadata → TF map[string]string.
+// The extract function pulls the union value pointers from the SDK type.
+// Always returns a non-null map (empty {} for nil input) so Optional+Computed
+// metadata attributes don't oscillate between null and {} across plan/apply.
 func sdkMetadataToMap[T any](ctx context.Context, metadata map[string]T, extract func(T) metadataFields, diags *diag.Diagnostics) types.Map {
 	if len(metadata) == 0 {
-		return types.MapNull(types.StringType)
+		result, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		diags.Append(d...)
+		return result
 	}
 	stringMap := make(map[string]string, len(metadata))
 	for k, v := range metadata {

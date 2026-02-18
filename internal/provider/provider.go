@@ -19,31 +19,28 @@ import (
 	"github.com/polarsource/polar-go/retry"
 )
 
-// Ensure PolarProvider satisfies the provider interface.
+// Compile-time interface conformance check.
 var _ provider.Provider = &PolarProvider{}
 
 // PolarProvider defines the provider implementation.
 type PolarProvider struct {
-	// version is set to the provider version on release, "dev" when the
-	// provider is built and ran locally, and "test" when running acceptance
-	// testing.
-	version string
+	version string // set by goreleaser on release, "dev" locally, "test" in acceptance tests
 }
 
-// PolarProviderModel describes the provider data model.
+// PolarProviderModel maps the HCL provider block into Go via `tfsdk` struct tags.
 type PolarProviderModel struct {
 	AccessToken types.String `tfsdk:"access_token"`
 	Server      types.String `tfsdk:"server"`
 }
 
-// PolarProviderData wraps the SDK client with additional provider-level
-// configuration needed for supplemental raw HTTP calls (SDK gaps).
+// PolarProviderData is passed to every resource/datasource via Configure().
+// Wraps the SDK client plus raw credentials for supplemental HTTP calls (SDK gaps).
 type PolarProviderData struct {
 	Client      *polargo.Polar
-	AccessToken string
-	ServerURL   string
+	AccessToken string // needed for raw HTTP calls that bypass the SDK
+	ServerURL   string // base URL for raw HTTP calls (e.g. "https://api.polar.sh")
 
-	// orgOnce guards singleton enforcement for polar_organization.
+	// Singleton guard: only one polar_organization resource per provider.
 	orgOnce sync.Once
 	orgID   string
 	orgErr  error
@@ -90,21 +87,22 @@ func (p *PolarProvider) Schema(ctx context.Context, req provider.SchemaRequest, 
 	}
 }
 
+// Configure is called once by Terraform after schema validation.
+// It resolves auth + server settings, builds the SDK client, and stores
+// the resulting PolarProviderData so resources/datasources can use it.
 func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	// Deserialize the provider HCL block into our model struct.
 	var data PolarProviderModel
-
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Resolve access token: config value takes precedence over env var
+	// Resolve access token: config value takes precedence over env var.
 	accessToken := data.AccessToken.ValueString()
 	if accessToken == "" {
 		accessToken = os.Getenv("POLAR_ACCESS_TOKEN")
 	}
-
 	if accessToken == "" {
 		resp.Diagnostics.AddError(
 			"Missing Polar Access Token",
@@ -114,12 +112,11 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		return
 	}
 
-	// Build SDK client options
 	opts := []polargo.SDKOption{
 		polargo.WithSecurity(accessToken),
 	}
 
-	// Resolve server: config value takes precedence over env var
+	// Resolve server: config value takes precedence over env var.
 	serverStr := data.Server.ValueString()
 	if serverStr == "" {
 		serverStr = os.Getenv("POLAR_SERVER")
@@ -146,7 +143,7 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	}
 	opts = append(opts, polargo.WithServer(server))
 
-	// Retry on 429/5xx with exponential backoff
+	// Built-in retry for rate limits (429) and server errors (5xx).
 	opts = append(opts, polargo.WithRetryConfig(retry.Config{
 		Strategy: "backoff",
 		Backoff: &retry.BackoffStrategy{
@@ -160,12 +157,14 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 
 	client := polargo.New(opts...)
 
-	// Resolve the base URL for supplemental raw HTTP calls
+	// Base URL for raw HTTP calls that bypass the SDK.
 	serverURL := "https://sandbox-api.polar.sh"
 	if server == polargo.ServerProduction {
 		serverURL = "https://api.polar.sh"
 	}
 
+	// Package everything into PolarProviderData and hand it to Terraform.
+	// Resources receive this via resp.ResourceData, datasources via resp.DataSourceData.
 	providerData := &PolarProviderData{
 		Client:      client,
 		AccessToken: accessToken,
@@ -175,6 +174,8 @@ func (p *PolarProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	resp.ResourceData = providerData
 }
 
+// Resources returns constructors for all managed resources.
+// Terraform calls each constructor to get a fresh resource instance.
 func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewWebhookEndpointResource,
@@ -185,6 +186,7 @@ func (p *PolarProvider) Resources(ctx context.Context) []func() resource.Resourc
 	}
 }
 
+// DataSources returns constructors for all read-only data sources.
 func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewMeterDataSource,
@@ -192,6 +194,8 @@ func (p *PolarProvider) DataSources(ctx context.Context) []func() datasource.Dat
 	}
 }
 
+// New returns a factory function that Terraform calls to create the provider.
+// The version string is injected by goreleaser at build time.
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
 		return &PolarProvider{

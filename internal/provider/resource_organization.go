@@ -19,6 +19,7 @@ import (
 	"github.com/polarsource/polar-go/models/components"
 )
 
+// Compile-time interface conformance checks.
 var _ resource.Resource = &OrganizationResource{}
 var _ resource.ResourceWithImportState = &OrganizationResource{}
 
@@ -26,6 +27,10 @@ func NewOrganizationResource() resource.Resource {
 	return &OrganizationResource{}
 }
 
+// OrganizationResource uses adopt-existing lifecycle: Create discovers the org
+// scoped to the access token and updates it (orgs can't be created via API).
+// Delete just removes from state (orgs can't be deleted). Needs the full
+// PolarProviderData (not just the SDK client) for supplemental HTTP calls.
 type OrganizationResource struct {
 	provider *PolarProviderData
 }
@@ -258,6 +263,8 @@ func (r *OrganizationResource) Configure(ctx context.Context, req resource.Confi
 	}
 }
 
+// Create adopts the existing organization rather than creating one.
+// Flow: discover org via token → claim singleton → update settings → poll → save.
 func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data OrganizationResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -265,9 +272,10 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	// Save planned website to restore formatting after API normalizes trailing slash.
 	plannedWebsite := data.Website
 
-	// Discover the single org scoped to the access token
+	// The access token is scoped to exactly one org — discover it.
 	org, err := discoverOrganization(ctx, r.provider)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -277,6 +285,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	// Singleton guard — only one polar_organization resource per provider.
 	if err := r.provider.ClaimOrganization(org.ID); err != nil {
 		resp.Diagnostics.AddError(
 			"Duplicate organization resource",
@@ -302,7 +311,8 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 
 	writeTime := latestTimestamp(updateResult.Organization)
 
-	// Supplemental raw HTTP for subscription_settings (SDK missing prevent_trial_abuse)
+	// The SDK is missing `prevent_trial_abuse` on subscription_settings, so we
+	// use a raw HTTP PATCH to send the full subscription_settings payload.
 	if data.SubscriptionSettings != nil {
 		payload := buildSupplementalPayload(&data)
 		if err := patchOrgSupplemental(ctx, r.provider.ServerURL, r.provider.AccessToken, org.ID, payload); err != nil {
@@ -314,7 +324,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		}
 	}
 
-	// Poll until the read-back matches planned values (eventual consistency)
+	// Eventual consistency poll.
 	consistent, err := pollForConsistency(ctx, "organization", org.ID, writeTime, func() (*components.Organization, error) {
 		result, err := r.provider.Client.Organizations.Get(ctx, org.ID)
 		if err != nil {
@@ -334,12 +344,15 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		"id": consistent.ID,
 	})
 
+	// Map response to state. Supplemental HTTP GET reads prevent_trial_abuse
+	// (not in SDK response). preserveURLFormatting avoids trailing-slash diffs.
 	mapOrganizationResponseToState(ctx, consistent, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(mapSupplementalSubscriptionSettings(ctx, r.provider.ServerURL, r.provider.AccessToken, consistent.ID, &data)...)
 	preserveURLFormatting(&data.Website, plannedWebsite)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Read: SDK GET + supplemental HTTP GET for prevent_trial_abuse.
 func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data OrganizationResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -364,6 +377,7 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update: SDK PATCH + supplemental raw HTTP for prevent_trial_abuse → poll → save.
 func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data OrganizationResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -390,7 +404,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 
 	writeTime := latestTimestamp(updateResult.Organization)
 
-	// Supplemental raw HTTP for subscription_settings (SDK missing prevent_trial_abuse)
+	// Raw HTTP PATCH for prevent_trial_abuse (same SDK gap as Create).
 	if data.SubscriptionSettings != nil {
 		payload := buildSupplementalPayload(&data)
 		if err := patchOrgSupplemental(ctx, r.provider.ServerURL, r.provider.AccessToken, data.ID.ValueString(), payload); err != nil {
@@ -402,7 +416,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		}
 	}
 
-	// Poll until the read-back matches planned values (eventual consistency)
+	// Eventual consistency poll.
 	consistent, err := pollForConsistency(ctx, "organization", data.ID.ValueString(), writeTime, func() (*components.Organization, error) {
 		result, err := r.provider.Client.Organizations.Get(ctx, data.ID.ValueString())
 		if err != nil {
@@ -424,8 +438,8 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Delete is a no-op — orgs can't be deleted via API. We just drop from TF state.
 func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	// Organization cannot be deleted — just remove from state
 	tflog.Trace(ctx, "organization released from Terraform management")
 }
 

@@ -27,6 +27,7 @@ var supplementalHTTPClient = &http.Client{
 }
 
 // --- Discover the single organization scoped to the access token ---
+// Polar access tokens are org-scoped, so listing orgs should return exactly one.
 
 func discoverOrganization(ctx context.Context, client *PolarProviderData) (*components.Organization, error) {
 	resp, err := client.Client.Organizations.List(ctx, nil, nil, nil, nil)
@@ -44,6 +45,8 @@ func discoverOrganization(ctx context.Context, client *PolarProviderData) (*comp
 }
 
 // --- Build SDK OrganizationUpdate from Terraform model ---
+// Only sets fields the user included in their config (non-null).
+// subscription_settings is excluded — it's handled via raw HTTP due to SDK gaps.
 
 func buildOrganizationUpdate(ctx context.Context, data *OrganizationResourceModel) (*components.OrganizationUpdate, diag.Diagnostics) {
 	var diags diag.Diagnostics
@@ -128,12 +131,14 @@ func buildOrganizationUpdate(ctx context.Context, data *OrganizationResourceMode
 }
 
 // --- Map SDK Organization response to Terraform state ---
+// Only populates fields the user opted into (non-null in state).
+// This lets users manage a subset of settings without TF fighting over the rest.
 
 func mapOrganizationResponseToState(ctx context.Context, org *components.Organization, data *OrganizationResourceModel, diags *diag.Diagnostics) {
 	data.ID = types.StringValue(org.ID)
 	data.Slug = types.StringValue(org.Slug)
 
-	// Profile fields: only set if user configured them (Optional attributes)
+	// Profile fields: only set if user included them in config.
 	if !data.Name.IsNull() {
 		data.Name = types.StringValue(org.Name)
 	}
@@ -206,9 +211,10 @@ func mapOrganizationResponseToState(ctx context.Context, org *components.Organiz
 	}
 }
 
-// --- Raw HTTP for subscription_settings (SDK missing prevent_trial_abuse) ---
+// --- Raw HTTP for subscription_settings (SDK gap workaround) ---
+// The Speakeasy-generated SDK omits `prevent_trial_abuse` from the subscription
+// settings struct. We use raw HTTP PATCH/GET to fill the gap.
 
-// subscriptionSettingsJSON is the JSON shape for subscription_settings sent via raw HTTP.
 type subscriptionSettingsJSON struct {
 	AllowMultipleSubscriptions   bool   `json:"allow_multiple_subscriptions"`
 	AllowCustomerUpdates         bool   `json:"allow_customer_updates"`
@@ -320,9 +326,9 @@ func getOrgSupplemental(ctx context.Context, serverURL, token, orgID string) (*o
 	return &result, nil
 }
 
-// doWithRetry executes an HTTP request function with exponential backoff on 429/5xx.
-// If fn returns (nil, nil), the request is treated as successful (caller already
-// consumed and closed the response body).
+// doWithRetry executes fn with exponential backoff on 429 (rate limit) and 5xx
+// (server errors). If fn returns (nil, nil), it means the caller already consumed
+// and closed the response body on success (see getOrgSupplemental).
 func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 	const maxAttempts = 5
 	const initialBackoff = 500 * time.Millisecond

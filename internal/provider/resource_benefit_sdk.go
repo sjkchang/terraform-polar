@@ -13,8 +13,10 @@ import (
 	"github.com/polarsource/polar-go/models/operations"
 )
 
-// timestampedBenefit wraps *components.Benefit to satisfy the Timestamped
-// interface by delegating to the active union variant's timestamp methods.
+// timestampedBenefit wraps *components.Benefit (a union type) to satisfy the
+// Timestamped interface. Since each benefit variant (Custom, Discord, etc.) has
+// its own timestamp fields, we switch on the active variant to delegate.
+// This is needed because pollForConsistency requires Timestamped.
 type timestampedBenefit struct{ *components.Benefit }
 
 func (b *timestampedBenefit) GetCreatedAt() time.Time {
@@ -54,6 +56,8 @@ func (b *timestampedBenefit) GetModifiedAt() *time.Time {
 }
 
 // --- Build SDK Create request ---
+// Benefits are polymorphic — the TF `type` field determines which SDK union
+// variant to construct. Each builder function handles one benefit type.
 
 func buildBenefitCreateRequest(ctx context.Context, data *BenefitResourceModel) (*components.BenefitCreate, diag.Diagnostics) {
 	var diags diag.Diagnostics
@@ -228,6 +232,8 @@ func buildMeterCreditCreate(ctx context.Context, description string, data *Benef
 }
 
 // --- Build SDK Update request ---
+// Same polymorphic dispatch as create. The update types use a different SDK
+// union (BenefitsUpdateBenefitUpdate) with slightly different field types.
 
 func buildBenefitUpdateRequest(ctx context.Context, data *BenefitResourceModel) (*operations.BenefitsUpdateBenefitUpdate, diag.Diagnostics) {
 	var diags diag.Diagnostics
@@ -364,9 +370,11 @@ func buildBenefitUpdateRequest(ctx context.Context, data *BenefitResourceModel) 
 }
 
 // --- Map SDK response to Terraform state ---
+// The API response is a union with one active variant. We clear all properties
+// blocks first, then populate only the matching one based on which variant is set.
 
 func mapBenefitResponseToState(ctx context.Context, benefit *components.Benefit, data *BenefitResourceModel, diags *diag.Diagnostics) {
-	// Clear all type-specific properties first; the matching case will set its own.
+	// Reset all type-specific properties — the switch below sets only the active one.
 	data.CustomProperties = nil
 	data.DiscordProperties = nil
 	data.GitHubRepositoryProperties = nil

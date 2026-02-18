@@ -20,6 +20,9 @@ var (
 	// https://goreleaser.com/cookbooks/using-main.version/
 )
 
+// main starts the Terraform provider plugin process. Terraform communicates
+// with this binary over gRPC — providerserver.Serve handles the protocol,
+// while provider.New returns our provider implementation.
 func main() {
 	var debug bool
 
@@ -27,6 +30,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
+		// Address must match the registry path users put in their required_providers block.
 		Address: "registry.terraform.io/sjkchang/polar",
 		Debug:   debug,
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/polarsource/polar-go/models/components"
 )
 
+// Compile-time interface conformance checks.
 var _ resource.Resource = &MeterResource{}
 var _ resource.ResourceWithImportState = &MeterResource{}
 
@@ -32,7 +33,7 @@ type MeterResource struct {
 	client *polargo.Polar
 }
 
-// Model types shared between meter resource and data source.
+// --- Terraform model types (shared between resource and data source) ---
 
 type MeterResourceModel struct {
 	ID          types.String      `tfsdk:"id"`
@@ -42,6 +43,8 @@ type MeterResourceModel struct {
 	Metadata    types.Map         `tfsdk:"metadata"`
 }
 
+// FilterModel defines which incoming events the meter counts.
+// Clauses are combined with the conjunction (and/or).
 type FilterModel struct {
 	Conjunction types.String        `tfsdk:"conjunction"`
 	Clauses     []FilterClauseModel `tfsdk:"clauses"`
@@ -53,6 +56,7 @@ type FilterClauseModel struct {
 	Value    types.String `tfsdk:"value"`
 }
 
+// AggregationModel defines how matched events are aggregated (count, sum, avg, etc.).
 type AggregationModel struct {
 	Func     types.String `tfsdk:"func"`
 	Property types.String `tfsdk:"property"`
@@ -134,6 +138,7 @@ func (r *MeterResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"metadata": schema.MapAttribute{
 				MarkdownDescription: "Key-value metadata.",
 				Optional:            true,
+				Computed:            true,
 				ElementType:         types.StringType,
 			},
 		},
@@ -146,6 +151,7 @@ func (r *MeterResource) Configure(ctx context.Context, req resource.ConfigureReq
 	}
 }
 
+// Create: plan → convert to SDK types → call API → poll for consistency → save state.
 func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data MeterResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -153,12 +159,14 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	// Build the SDK create request from TF model.
 	createReq := components.MeterCreate{
 		Name:        data.Name.ValueString(),
 		Filter:      filterModelToSDK(data.Filter),
 		Aggregation: aggregationModelToCreateSDK(data.Aggregation),
 	}
 
+	// Metadata is optional — only include if user specified it.
 	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
 		m, d := metadataToCreateSDK(ctx, data.Metadata, components.CreateMeterCreateMetadataStr)
 		resp.Diagnostics.Append(d...)
@@ -181,6 +189,7 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"id": result.Meter.ID,
 	})
 
+	// Eventual consistency poll — wait for GET to reflect the write.
 	writeTime := latestTimestamp(result.Meter)
 	meter, err := pollForConsistency(ctx, "meter", result.Meter.ID, writeTime, func() (*components.Meter, error) {
 		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
@@ -201,6 +210,9 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Read refreshes TF state from the API. Handles two "gone" cases:
+// - 404 Not Found → resource deleted out-of-band
+// - ArchivedAt set → resource was archived (our Delete archives, not deletes)
 func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data MeterResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -220,7 +232,7 @@ func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// Treat archived meters as deleted
+	// Archived meters are treated as deleted — remove from TF state.
 	if result.Meter.ArchivedAt != nil {
 		tflog.Trace(ctx, "meter is archived, removing from state", map[string]interface{}{
 			"id": data.ID.ValueString(),
@@ -233,6 +245,7 @@ func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update: plan → build SDK request → call API → poll for consistency → save state.
 func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data MeterResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -268,6 +281,7 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
+	// Eventual consistency poll.
 	writeTime := latestTimestamp(result.Meter)
 	meter, err := pollForConsistency(ctx, "meter", result.Meter.ID, writeTime, func() (*components.Meter, error) {
 		r, err := r.client.Meters.Get(ctx, result.Meter.ID)
@@ -288,6 +302,8 @@ func (r *MeterResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Delete archives the meter (Polar has no DELETE for meters).
+// Archived meters are treated as "gone" by Read.
 func (r *MeterResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data MeterResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -295,7 +311,6 @@ func (r *MeterResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	// Meters don't have a DELETE endpoint; archive instead
 	isArchived := true
 	_, err := r.client.Meters.Update(ctx, data.ID.ValueString(), components.MeterUpdate{
 		IsArchived: &isArchived,
@@ -333,7 +348,11 @@ func mapMeterResponseToState(ctx context.Context, meter *components.Meter, data 
 }
 
 // --- SDK conversion helpers ---
+// These functions translate between TF model types and Polar SDK types.
+// The SDK uses union types (e.g. MeterCreateAggregation with one active variant)
+// while TF uses flat structs, so the conversions involve switch statements.
 
+// filterModelToSDK converts the TF filter model → SDK Filter for create/update requests.
 func filterModelToSDK(filter *FilterModel) components.Filter {
 	clauses := make([]components.Clauses, len(filter.Clauses))
 	for i, c := range filter.Clauses {
@@ -351,6 +370,9 @@ func filterModelToSDK(filter *FilterModel) components.Filter {
 	}
 }
 
+// sdkFilterToModel converts an SDK Filter → TF model for state mapping.
+// Only handles FilterClause (flat); nested Filter clauses are skipped since
+// the TF schema doesn't support recursive nesting.
 func sdkFilterToModel(filter components.Filter, diags *diag.Diagnostics) *FilterModel {
 	clauses := make([]FilterClauseModel, 0, len(filter.Clauses))
 	for _, c := range filter.Clauses {
@@ -384,6 +406,9 @@ func sdkFilterToModel(filter components.Filter, diags *diag.Diagnostics) *Filter
 	}
 }
 
+// aggregationModelToCreateSDK converts the TF aggregation → SDK union type for create.
+// The SDK has separate types per aggregation function (CountAggregation,
+// PropertyAggregation, UniqueAggregation) wrapped in a union.
 func aggregationModelToCreateSDK(agg *AggregationModel) components.MeterCreateAggregation {
 	funcName := agg.Func.ValueString()
 	property := agg.Property.ValueString()
@@ -420,6 +445,8 @@ func aggregationModelToCreateSDK(agg *AggregationModel) components.MeterCreateAg
 	}
 }
 
+// aggregationModelToUpdateSDK is the same conversion but for the update-specific
+// union type. The SDK uses different union wrappers for create vs update.
 func aggregationModelToUpdateSDK(agg *AggregationModel) *components.Aggregation {
 	funcName := agg.Func.ValueString()
 	property := agg.Property.ValueString()
@@ -458,6 +485,8 @@ func aggregationModelToUpdateSDK(agg *AggregationModel) *components.Aggregation 
 	return &result
 }
 
+// sdkAggregationToModel converts the SDK response aggregation → TF model.
+// Checks which union variant is set and maps it to our flat func/property struct.
 func sdkAggregationToModel(agg components.MeterAggregation, diags *diag.Diagnostics) *AggregationModel {
 	model := &AggregationModel{}
 	switch {

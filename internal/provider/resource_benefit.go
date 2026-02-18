@@ -18,6 +18,7 @@ import (
 	"github.com/polarsource/polar-go"
 )
 
+// Compile-time interface conformance checks.
 var _ resource.Resource = &BenefitResource{}
 var _ resource.ResourceWithImportState = &BenefitResource{}
 
@@ -30,6 +31,8 @@ type BenefitResource struct {
 }
 
 // --- Terraform model types ---
+// Benefits are a polymorphic resource — the `type` field determines which
+// `*_properties` block is relevant. Only one properties block should be set.
 
 type BenefitResourceModel struct {
 	ID                         types.String                            `tfsdk:"id"`
@@ -126,6 +129,7 @@ func (r *BenefitResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"metadata": schema.MapAttribute{
 				MarkdownDescription: "Key-value metadata.",
 				Optional:            true,
+				Computed:            true,
 				ElementType:         types.StringType,
 			},
 
@@ -274,6 +278,9 @@ func (r *BenefitResource) Configure(ctx context.Context, req resource.ConfigureR
 	}
 }
 
+// Create: plan → build type-specific SDK request → call API → poll → save state.
+// The benefit SDK types are polymorphic (union), so buildBenefitCreateRequest
+// dispatches to the correct builder based on the `type` field.
 func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data BenefitResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -281,6 +288,7 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
+	// Build the SDK request — dispatches by benefit type (custom, discord, etc.).
 	createReq, diags := buildBenefitCreateRequest(ctx, &data)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -300,16 +308,13 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		"type": data.Type.ValueString(),
 	})
 
-	// Extract the ID from the create response, then poll for visibility
-	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	benefitID := data.ID.ValueString()
+	// Benefit SDK response is a union — extract ID from the active variant.
+	// timestampedBenefit wraps the union to satisfy the Timestamped interface
+	// needed by pollForConsistency.
+	id := benefitID(*result.Benefit)
 	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
-	wrappedBenefit, err := pollForConsistency(ctx, "benefit", benefitID, writeTime, func() (*timestampedBenefit, error) {
-		result, err := r.client.Benefits.Get(ctx, benefitID)
+	wrappedBenefit, err := pollForConsistency(ctx, "benefit", id, writeTime, func() (*timestampedBenefit, error) {
+		result, err := r.client.Benefits.Get(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -318,7 +323,7 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error waiting for benefit visibility",
-			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", benefitID, err),
+			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", id, err),
 		)
 		return
 	}
@@ -393,6 +398,7 @@ func (r *BenefitResource) Update(ctx context.Context, req resource.UpdateRequest
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Delete performs a real DELETE (unlike meters/products which archive).
 func (r *BenefitResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data BenefitResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)

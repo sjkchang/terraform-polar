@@ -20,6 +20,7 @@ import (
 	"github.com/polarsource/polar-go/models/components"
 )
 
+// Compile-time interface conformance checks.
 var _ resource.Resource = &ProductResource{}
 var _ resource.ResourceWithImportState = &ProductResource{}
 
@@ -33,6 +34,9 @@ type ProductResource struct {
 
 // --- Terraform model types ---
 
+// ProductResourceModel is the TF state for polar_product.
+// Products have polymorphic prices (fixed/free/custom/metered_unit) and can
+// be either one-time or recurring (determined by recurring_interval).
 type ProductResourceModel struct {
 	ID                types.String `tfsdk:"id"`
 	Name              types.String `tfsdk:"name"`
@@ -45,6 +49,13 @@ type ProductResourceModel struct {
 	IsArchived        types.Bool   `tfsdk:"is_archived"`
 }
 
+// PriceModel is a flat struct that covers all price types. The `amount_type`
+// field determines which other fields are relevant:
+// - "fixed":        price_amount, price_currency
+// - "free":         (no extra fields)
+// - "custom":       minimum_amount, maximum_amount, preset_amount, price_currency
+// - "metered_unit": meter_id, unit_amount, cap_amount, price_currency
+// Unused fields are set to null in state.
 type PriceModel struct {
 	AmountType    types.String `tfsdk:"amount_type"`
 	PriceCurrency types.String `tfsdk:"price_currency"`
@@ -155,11 +166,13 @@ func (r *ProductResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"metadata": schema.MapAttribute{
 				MarkdownDescription: "Key-value metadata.",
 				Optional:            true,
+				Computed:            true,
 				ElementType:         types.StringType,
 			},
 			"medias": schema.ListAttribute{
 				MarkdownDescription: "List of media file IDs attached to the product.",
 				Optional:            true,
+				Computed:            true,
 				ElementType:         types.StringType,
 			},
 			"benefit_ids": schema.SetAttribute{
@@ -183,6 +196,9 @@ func (r *ProductResource) Configure(ctx context.Context, req resource.ConfigureR
 	}
 }
 
+// Create: plan → build SDK request → call API → attach benefits → poll → save state.
+// Products have a two-step creation: create the product, then attach benefits
+// via a separate API call (benefits are managed independently of the product).
 func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data ProductResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -190,6 +206,7 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
+	// Build the SDK request — dispatches to recurring or one-time based on recurring_interval.
 	createReq, diags := buildProductCreateRequest(ctx, &data)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -209,16 +226,15 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		"id": result.Product.ID,
 	})
 
-	// Persist the product ID immediately so that if a subsequent step (benefits
-	// update, visibility poll) fails, a re-apply will trigger Update instead of
-	// creating a duplicate product.
+	// Save the ID to state immediately. If a later step fails (benefits, poll),
+	// the next `terraform apply` will call Update instead of creating a duplicate.
 	data.ID = types.StringValue(result.Product.ID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Update benefits if configured
+	// Benefits are attached via a separate API endpoint (replace-all semantics).
 	if !data.BenefitIDs.IsNull() {
 		benefitIDs := extractBenefitIDsFromSet(ctx, data.BenefitIDs, &resp.Diagnostics)
 		if resp.Diagnostics.HasError() {
@@ -236,6 +252,7 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		}
 	}
 
+	// Eventual consistency poll.
 	writeTime := latestTimestamp(result.Product)
 	product, err := pollForConsistency(ctx, "product", result.Product.ID, writeTime, func() (*components.Product, error) {
 		r, err := r.client.Products.Get(ctx, result.Product.ID)
@@ -252,12 +269,16 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
+	// Map response → state. Preserve the user's unit_amount formatting so
+	// "0.50" doesn't drift to "0.5" and cause spurious diffs.
 	plannedPrices := data.Prices
 	mapProductResponseToState(ctx, product, &data, &resp.Diagnostics)
 	preserveUnitAmountFormatting(data.Prices, plannedPrices)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Read refreshes TF state from the API. Archived products are treated as deleted.
+// Preserves the user's unit_amount formatting from prior state.
 func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data ProductResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -265,6 +286,7 @@ func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
+	// Save prior prices so we can preserve unit_amount formatting after mapping.
 	priorPrices := data.Prices
 	result, err := r.client.Products.Get(ctx, data.ID.ValueString())
 	if err != nil {
@@ -278,7 +300,7 @@ func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	// Treat archived products as deleted (mirrors meter resource behavior)
+	// Archived = "deleted" for Terraform purposes (same pattern as meters).
 	if result.Product.IsArchived {
 		tflog.Trace(ctx, "product is archived, removing from state", map[string]interface{}{
 			"id": data.ID.ValueString(),
@@ -292,6 +314,9 @@ func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update: plan → fetch current prices → build SDK request → call API → benefits → poll → save.
+// We fetch current prices first so we can match unchanged prices by value and
+// reuse their IDs, avoiding unnecessary price recreation on the Polar side.
 func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data ProductResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -299,7 +324,7 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	// Fetch current product to get existing price IDs for reuse
+	// Fetch existing prices so we can match unchanged ones by value and reuse their IDs.
 	current, err := r.client.Products.Get(ctx, data.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -366,6 +391,8 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Delete archives the product (Polar has no DELETE for products).
+// Archived products are treated as "gone" by Read.
 func (r *ProductResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data ProductResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -373,7 +400,6 @@ func (r *ProductResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	// Products don't have a DELETE endpoint; archive instead
 	isArchived := true
 	_, err := r.client.Products.Update(ctx, data.ID.ValueString(), components.ProductUpdate{
 		IsArchived: &isArchived,

@@ -23,6 +23,7 @@ import (
 	"github.com/polarsource/polar-go/models/components"
 )
 
+// Compile-time interface conformance checks.
 var _ resource.Resource = &WebhookEndpointResource{}
 var _ resource.ResourceWithImportState = &WebhookEndpointResource{}
 
@@ -31,9 +32,10 @@ func NewWebhookEndpointResource() resource.Resource {
 }
 
 type WebhookEndpointResource struct {
-	client *polargo.Polar
+	client *polargo.Polar // set in Configure()
 }
 
+// WebhookEndpointResourceModel is the Terraform state shape for polar_webhook_endpoint.
 type WebhookEndpointResourceModel struct {
 	ID      types.String `tfsdk:"id"`
 	URL     types.String `tfsdk:"url"`
@@ -162,7 +164,10 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		endpoint = updateResult.WebhookEndpoint
 	}
 
-	// Poll for visibility, then map response to state
+	// Polar's API is eventually consistent — a successful write may not be
+	// reflected by the next read. We extract the write timestamp from the API
+	// response (not local clock) and poll GET until the response timestamp
+	// catches up, confirming the write has propagated across replicas.
 	writeTime := latestTimestamp(endpoint)
 	webhook, err := pollForConsistency(ctx, "webhook endpoint", endpoint.ID, writeTime, func() (*components.WebhookEndpoint, error) {
 		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, endpoint.ID)
@@ -179,10 +184,13 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
+	// Map the consistent API response → TF model and persist to state.
 	r.mapResponseToState(ctx, webhook, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Read refreshes TF state from the API. If the resource was deleted out-of-band
+// (404), it's gracefully removed from state so Terraform knows to recreate it.
 func (r *WebhookEndpointResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data WebhookEndpointResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -206,6 +214,7 @@ func (r *WebhookEndpointResource) Read(ctx context.Context, req resource.ReadReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update: plan → build SDK request → call API → poll for consistency → save state.
 func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data WebhookEndpointResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -213,13 +222,12 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	// Convert events from Terraform set to SDK type
+	// Convert TF set → SDK event types.
 	var eventStrings []string
 	resp.Diagnostics.Append(data.Events.ElementsAs(ctx, &eventStrings, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
 	events := make([]components.WebhookEventType, len(eventStrings))
 	for i, e := range eventStrings {
 		events[i] = components.WebhookEventType(e)
@@ -245,6 +253,7 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
+	// Eventual consistency poll (same pattern as Create).
 	webhookID := data.ID.ValueString()
 	writeTime := latestTimestamp(updateResult.WebhookEndpoint)
 	webhook, err := pollForConsistency(ctx, "webhook endpoint", webhookID, writeTime, func() (*components.WebhookEndpoint, error) {
@@ -266,6 +275,8 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Delete performs a real DELETE (unlike meters/products which archive).
+// If the resource was already deleted out-of-band (404), that's a no-op.
 func (r *WebhookEndpointResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data WebhookEndpointResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -275,7 +286,6 @@ func (r *WebhookEndpointResource) Delete(ctx context.Context, req resource.Delet
 
 	_, err := r.client.Webhooks.DeleteWebhookEndpoint(ctx, data.ID.ValueString())
 	if err != nil {
-		// If already deleted, that's fine
 		if isNotFound(err) {
 			return
 		}

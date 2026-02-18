@@ -12,6 +12,9 @@ import (
 )
 
 // --- Build SDK Create request ---
+// Products are polymorphic at two levels:
+// 1. Recurring vs one-time (determined by recurring_interval being set)
+// 2. Price type (fixed/free/custom/metered_unit per price entry)
 
 func buildProductCreateRequest(ctx context.Context, data *ProductResourceModel) (*components.ProductCreate, diag.Diagnostics) {
 	var diags diag.Diagnostics
@@ -90,6 +93,8 @@ func buildProductCreateRequest(ctx context.Context, data *ProductResourceModel) 
 }
 
 // --- Build SDK Update request ---
+// Updates receive the current prices from the API so we can match unchanged
+// prices by value and send their existing IDs (avoids unnecessary recreation).
 
 func buildProductUpdateRequest(ctx context.Context, data *ProductResourceModel, currentPrices []components.Prices) (*components.ProductUpdate, diag.Diagnostics) {
 	var diags diag.Diagnostics
@@ -138,6 +143,7 @@ func buildProductUpdateRequest(ctx context.Context, data *ProductResourceModel, 
 
 // --- Map SDK response to Terraform state ---
 
+// mapProductResponseToState converts the full product API response into the TF model.
 func mapProductResponseToState(ctx context.Context, product *components.Product, data *ProductResourceModel, diags *diag.Diagnostics) {
 	data.ID = types.StringValue(product.ID)
 	data.Name = types.StringValue(product.Name)
@@ -158,7 +164,9 @@ func mapProductResponseToState(ctx context.Context, product *components.Product,
 		return metadataFields{Str: v.Str, Integer: v.Integer, Number: v.Number, Boolean: v.Boolean}
 	}, diags)
 
-	// Map benefit_ids — only if the user is managing benefits (non-null in state)
+	// Map benefit_ids — only if the user opted into TF-managed benefits (non-null).
+	// If benefit_ids was omitted from config, we leave it null so Terraform
+	// doesn't try to manage benefits that were attached via the dashboard.
 	if !data.BenefitIDs.IsNull() {
 		ids := make([]string, 0, len(product.Benefits))
 		for _, b := range product.Benefits {
@@ -171,18 +179,14 @@ func mapProductResponseToState(ctx context.Context, product *components.Product,
 		data.BenefitIDs = benefitSet
 	}
 
-	// Map medias
-	if len(product.Medias) > 0 {
-		mediaIDs := make([]string, len(product.Medias))
-		for i, m := range product.Medias {
-			mediaIDs[i] = m.ID
-		}
-		mediaList, d := types.ListValueFrom(ctx, types.StringType, mediaIDs)
-		diags.Append(d...)
-		data.Medias = mediaList
-	} else {
-		data.Medias = types.ListNull(types.StringType)
+	// Map medias (always non-null so Optional+Computed doesn't oscillate)
+	mediaIDs := make([]string, len(product.Medias))
+	for i, m := range product.Medias {
+		mediaIDs[i] = m.ID
 	}
+	mediaList, d := types.ListValueFrom(ctx, types.StringType, mediaIDs)
+	diags.Append(d...)
+	data.Medias = mediaList
 }
 
 // --- Price conversion helpers ---
@@ -277,12 +281,14 @@ func pricesToOneTimeCreateSDK(prices []PriceModel) ([]components.ProductCreateOn
 }
 
 // --- Existing price matching for updates ---
+// When updating a product, Polar expects either an existing price ID (to keep it)
+// or a new price definition (to create it). We match planned prices against
+// current API prices by value to determine which can be reused.
 
-// existingPrice holds the identity fields of a current API price for matching.
 type existingPrice struct {
 	id   string
-	data PriceModel // the full model for comparison
-	used bool
+	data PriceModel
+	used bool // prevents the same API price from being matched twice
 }
 
 // extractExistingPrices converts the API price response into matchable structs.
@@ -355,13 +361,16 @@ func optionalInt64Equal(a, b types.Int64) bool {
 	return a.ValueInt64() == b.ValueInt64()
 }
 
+// pricesToUpdateSDK builds the update price list. For each planned price:
+// 1. Try to find an existing API price with matching values → reuse its ID
+// 2. If no match → create a new price definition
 func pricesToUpdateSDK(planned []PriceModel, currentPrices []components.Prices) ([]components.ProductUpdatePrices, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	existing := extractExistingPrices(currentPrices)
 	result := make([]components.ProductUpdatePrices, len(planned))
 
 	for i, p := range planned {
-		// Reuse existing price if values match (avoids unnecessary price recreation)
+		// Try to reuse an existing price if values match.
 		var matched bool
 		for _, ep := range existing {
 			if !ep.used && pricesMatch(p, ep.data) {
@@ -436,7 +445,7 @@ func benefitID(b components.Benefit) string {
 	}
 }
 
-// --- Response mapping ---
+// --- Response mapping (API → TF state) ---
 
 func sdkPricesToModel(prices []components.Prices, diags *diag.Diagnostics) []PriceModel {
 	result := make([]PriceModel, 0, len(prices))
@@ -456,6 +465,8 @@ func sdkPricesToModel(prices []components.Prices, diags *diag.Diagnostics) []Pri
 	return result
 }
 
+// nullPriceModel creates a PriceModel with all optional fields set to null.
+// The caller then fills in only the fields relevant to the amount_type.
 func nullPriceModel(amountType string, currency types.String) PriceModel {
 	return PriceModel{
 		AmountType:    types.StringValue(amountType),
@@ -470,6 +481,7 @@ func nullPriceModel(amountType string, currency types.String) PriceModel {
 	}
 }
 
+// sdkProductPriceToModel converts one SDK price union variant → flat PriceModel.
 func sdkProductPriceToModel(price *components.ProductPrice) *PriceModel {
 	switch {
 	case price.ProductPriceFixed != nil:
@@ -525,16 +537,24 @@ func numericStringsEqual(a, b string) bool {
 // formatting when the API value is numerically equivalent. This prevents
 // Terraform from detecting spurious diffs due to trailing-zero differences
 // (e.g. user writes "0.50", API returns "0.500000000000", normalized to "0.5").
+//
+// Prices are matched by content (via pricesMatch) rather than by index,
+// so reordering, inserting, or removing prices won't mis-apply formatting.
 func preserveUnitAmountFormatting(prices []PriceModel, priorPrices []PriceModel) {
+	used := make([]bool, len(priorPrices))
 	for i := range prices {
-		if i >= len(priorPrices) {
-			break
-		}
-		if prices[i].UnitAmount.IsNull() || priorPrices[i].UnitAmount.IsNull() {
+		if prices[i].UnitAmount.IsNull() {
 			continue
 		}
-		if numericStringsEqual(prices[i].UnitAmount.ValueString(), priorPrices[i].UnitAmount.ValueString()) {
-			prices[i].UnitAmount = priorPrices[i].UnitAmount
+		for j := range priorPrices {
+			if used[j] || priorPrices[j].UnitAmount.IsNull() {
+				continue
+			}
+			if pricesMatch(prices[i], priorPrices[j]) {
+				prices[i].UnitAmount = priorPrices[j].UnitAmount
+				used[j] = true
+				break
+			}
 		}
 	}
 }

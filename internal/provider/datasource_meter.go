@@ -12,12 +12,15 @@ import (
 	"github.com/polarsource/polar-go"
 )
 
+// Compile-time interface conformance check.
 var _ datasource.DataSource = &MeterDataSource{}
 
 func NewMeterDataSource() datasource.DataSource {
 	return &MeterDataSource{}
 }
 
+// MeterDataSource is a read-only data source for looking up a meter by ID.
+// Useful for referencing an unmanaged meter in a metered-unit price or meter-credit benefit.
 type MeterDataSource struct {
 	client *polargo.Polar
 }

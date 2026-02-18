@@ -12,12 +12,16 @@ import (
 	"github.com/polarsource/polar-go"
 )
 
+// Compile-time interface conformance check.
 var _ datasource.DataSource = &BenefitDataSource{}
 
 func NewBenefitDataSource() datasource.DataSource {
 	return &BenefitDataSource{}
 }
 
+// BenefitDataSource is a read-only data source for looking up a benefit by ID.
+// Useful for referencing an unmanaged benefit (e.g. created in the dashboard)
+// from a managed product's benefit_ids.
 type BenefitDataSource struct {
 	client *polargo.Polar
 }
@@ -59,6 +63,7 @@ func (d *BenefitDataSource) Configure(ctx context.Context, req datasource.Config
 	}
 }
 
+// Read fetches the benefit and maps the active union variant to type + description.
 func (d *BenefitDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data BenefitDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -82,6 +87,7 @@ func (d *BenefitDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
+	// Benefit response is a union — check which variant is populated.
 	b := result.Benefit
 	data.ID = types.StringValue(benefitID(*b))
 	switch {
