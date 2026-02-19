@@ -173,7 +173,7 @@ func mapOrganizationResponseToState(ctx context.Context, org *components.Organiz
 		}
 	}
 
-	// Customer email settings: mapped via mapSupplementalCustomerEmailSettings
+	// Customer email settings: mapped via mapSupplementalSettings
 	// (SDK missing subscription_cycled_after_trial field, same gap as subscription_settings)
 }
 
@@ -291,7 +291,7 @@ func mapSupplementalSettings(ctx context.Context, serverURL, token, orgID string
 func patchOrgSupplemental(ctx context.Context, serverURL, token, orgID string, payload *orgSupplementalUpdatePayload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshaling subscription settings: %w", err)
+		return fmt.Errorf("marshaling supplemental settings: %w", err)
 	}
 
 	return doWithRetry(ctx, func() (*http.Response, error) {
@@ -306,7 +306,7 @@ func patchOrgSupplemental(ctx context.Context, serverURL, token, orgID string, p
 	})
 }
 
-// getOrgSupplemental reads subscription_settings via raw HTTP GET with retry.
+// getOrgSupplemental reads settings the SDK omits via raw HTTP GET with retry.
 func getOrgSupplemental(ctx context.Context, serverURL, token, orgID string) (*orgSupplementalGetResponse, error) {
 	var result orgSupplementalGetResponse
 

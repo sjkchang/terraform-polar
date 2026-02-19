@@ -252,23 +252,33 @@ func (r *ProductResource) Create(ctx context.Context, req resource.CreateRequest
 		}
 	}
 
-	// Map write response → state. The Create response predates the UpdateBenefits
-	// call, so we preserve the planned benefit_ids (we know they were applied).
-	plannedPrices := data.Prices
-	plannedBenefitIDs := data.BenefitIDs
-	mapProductResponseToState(ctx, result.Product, &data, &resp.Diagnostics)
-	if !plannedBenefitIDs.IsNull() {
-		data.BenefitIDs = plannedBenefitIDs
+	// Eventual consistency poll.
+	writeTime := latestTimestamp(result.Product)
+	product, err := pollForConsistency(ctx, "product", result.Product.ID, writeTime, func() (*components.Product, error) {
+		r, err := r.client.Products.Get(ctx, result.Product.ID)
+		if err != nil {
+			return nil, err
+		}
+		return r.Product, nil
+	}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for product visibility",
+			fmt.Sprintf("Product %s was created but not immediately readable: %s", result.Product.ID, err),
+		)
+		return
 	}
-	// Preserve the user's unit_amount formatting so "0.50" doesn't drift to "0.5".
+
+	// Map response → state. Preserve the user's unit_amount formatting so
+	// "0.50" doesn't drift to "0.5" and cause spurious diffs.
+	plannedPrices := data.Prices
+	mapProductResponseToState(ctx, product, &data, &resp.Diagnostics)
 	preserveUnitAmountFormatting(data.Prices, plannedPrices)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(result.Product), resp.Private)...)
 }
 
 // Read refreshes TF state from the API. Archived products are treated as deleted.
 // Preserves the user's unit_amount formatting from prior state.
-// Uses readWithConsistency to poll if a recent Create/Update stored a write timestamp.
 func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data ProductResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -278,36 +288,28 @@ func (r *ProductResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	// Save prior prices so we can preserve unit_amount formatting after mapping.
 	priorPrices := data.Prices
-
-	id := data.ID.ValueString()
-	product, err := readWithConsistency(ctx, "product", id, req.Private, resp.Private, func() (*components.Product, error) {
-		r, err := r.client.Products.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return r.Product, nil
-	}, &resp.Diagnostics)
+	result, err := r.client.Products.Get(ctx, data.ID.ValueString())
 	if err != nil {
-		if handleNotFoundRemove(ctx, err, "product", id, &resp.State) {
+		if handleNotFoundRemove(ctx, err, "product", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
 			"Error reading product",
-			fmt.Sprintf("Could not read product %s: %s", id, err),
+			fmt.Sprintf("Could not read product %s: %s", data.ID.ValueString(), err),
 		)
 		return
 	}
 
 	// Archived = "deleted" for Terraform purposes (same pattern as meters).
-	if product.IsArchived {
+	if result.Product.IsArchived {
 		tflog.Trace(ctx, "product is archived, removing from state", map[string]interface{}{
-			"id": id,
+			"id": data.ID.ValueString(),
 		})
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	mapProductResponseToState(ctx, product, &data, &resp.Diagnostics)
+	mapProductResponseToState(ctx, result.Product, &data, &resp.Diagnostics)
 	preserveUnitAmountFormatting(data.Prices, priorPrices)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -348,6 +350,8 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	writeTime := latestTimestamp(updateResult.Product)
+
 	// Update benefits if configured
 	if !data.BenefitIDs.IsNull() {
 		benefitIDs := extractBenefitIDsFromSet(ctx, data.BenefitIDs, &resp.Diagnostics)
@@ -366,16 +370,25 @@ func (r *ProductResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 
-	// The Update response predates the UpdateBenefits call, so preserve
-	// the planned benefit_ids (we know they were applied successfully).
-	plannedBenefitIDs := data.BenefitIDs
-	mapProductResponseToState(ctx, updateResult.Product, &data, &resp.Diagnostics)
-	if !plannedBenefitIDs.IsNull() {
-		data.BenefitIDs = plannedBenefitIDs
+	productID := data.ID.ValueString()
+	product, err := pollForConsistency(ctx, "product", productID, writeTime, func() (*components.Product, error) {
+		r, err := r.client.Products.Get(ctx, productID)
+		if err != nil {
+			return nil, err
+		}
+		return r.Product, nil
+	}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error reading product after update",
+			fmt.Sprintf("Could not read product %s: %s", productID, err),
+		)
+		return
 	}
+
+	mapProductResponseToState(ctx, product, &data, &resp.Diagnostics)
 	preserveUnitAmountFormatting(data.Prices, plannedPrices)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(updateResult.Product), resp.Private)...)
 }
 
 // Delete archives the product (Polar has no DELETE for products).

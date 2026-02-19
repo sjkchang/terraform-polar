@@ -361,9 +361,28 @@ func (r *BenefitResource) Create(ctx context.Context, req resource.CreateRequest
 		"type": data.Type.ValueString(),
 	})
 
-	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
+	// Benefit SDK response is a union — extract ID from the active variant.
+	// timestampedBenefit wraps the union to satisfy the Timestamped interface
+	// needed by pollForConsistency.
+	id := benefitID(*result.Benefit)
+	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
+	wrappedBenefit, err := pollForConsistency(ctx, "benefit", id, writeTime, func() (*timestampedBenefit, error) {
+		result, err := r.client.Benefits.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return &timestampedBenefit{result.Benefit}, nil
+	}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for benefit visibility",
+			fmt.Sprintf("Benefit %s was created but not immediately readable: %s", id, err),
+		)
+		return
+	}
+
+	mapBenefitResponseToState(ctx, wrappedBenefit.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(&timestampedBenefit{result.Benefit}), resp.Private)...)
 }
 
 func (r *BenefitResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -373,26 +392,19 @@ func (r *BenefitResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	id := data.ID.ValueString()
-	wrapped, err := readWithConsistency(ctx, "benefit", id, req.Private, resp.Private, func() (*timestampedBenefit, error) {
-		result, err := r.client.Benefits.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return &timestampedBenefit{result.Benefit}, nil
-	}, &resp.Diagnostics)
+	result, err := r.client.Benefits.Get(ctx, data.ID.ValueString())
 	if err != nil {
-		if handleNotFoundRemove(ctx, err, "benefit", id, &resp.State) {
+		if handleNotFoundRemove(ctx, err, "benefit", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
 			"Error reading benefit",
-			fmt.Sprintf("Could not read benefit %s: %s", id, err),
+			fmt.Sprintf("Could not read benefit %s: %s", data.ID.ValueString(), err),
 		)
 		return
 	}
 
-	mapBenefitResponseToState(ctx, wrapped.Benefit, &data, &resp.Diagnostics)
+	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -418,9 +430,25 @@ func (r *BenefitResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	mapBenefitResponseToState(ctx, result.Benefit, &data, &resp.Diagnostics)
+	benefitID := data.ID.ValueString()
+	writeTime := latestTimestamp(&timestampedBenefit{result.Benefit})
+	wrappedBenefit, err := pollForConsistency(ctx, "benefit", benefitID, writeTime, func() (*timestampedBenefit, error) {
+		result, err := r.client.Benefits.Get(ctx, benefitID)
+		if err != nil {
+			return nil, err
+		}
+		return &timestampedBenefit{result.Benefit}, nil
+	}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error reading benefit after update",
+			fmt.Sprintf("Could not read benefit %s: %s", benefitID, err),
+		)
+		return
+	}
+
+	mapBenefitResponseToState(ctx, wrappedBenefit.Benefit, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(&timestampedBenefit{result.Benefit}), resp.Private)...)
 }
 
 // Delete performs a real DELETE (unlike meters/products which archive).

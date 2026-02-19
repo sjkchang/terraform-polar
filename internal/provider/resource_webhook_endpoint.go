@@ -164,16 +164,33 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		endpoint = updateResult.WebhookEndpoint
 	}
 
-	// Map the write response directly to state (no re-fetch needed).
-	r.mapResponseToState(ctx, endpoint, &data, &resp.Diagnostics)
+	// Polar's API is eventually consistent — a successful write may not be
+	// reflected by the next read. We extract the write timestamp from the API
+	// response (not local clock) and poll GET until the response timestamp
+	// catches up, confirming the write has propagated across replicas.
+	writeTime := latestTimestamp(endpoint)
+	webhook, err := pollForConsistency(ctx, "webhook endpoint", endpoint.ID, writeTime, func() (*components.WebhookEndpoint, error) {
+		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, endpoint.ID)
+		if err != nil {
+			return nil, err
+		}
+		return result.WebhookEndpoint, nil
+	}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error waiting for webhook endpoint visibility",
+			fmt.Sprintf("Webhook endpoint %s was created but not immediately readable: %s", endpoint.ID, err),
+		)
+		return
+	}
+
+	// Map the consistent API response → TF model and persist to state.
+	r.mapResponseToState(ctx, webhook, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	// Store write timestamp so Read can poll for consistency if needed.
-	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(endpoint), resp.Private)...)
 }
 
 // Read refreshes TF state from the API. If the resource was deleted out-of-band
 // (404), it's gracefully removed from state so Terraform knows to recreate it.
-// Uses readWithConsistency to poll if a recent Create/Update stored a write timestamp.
 func (r *WebhookEndpointResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data WebhookEndpointResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -181,26 +198,19 @@ func (r *WebhookEndpointResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
-	id := data.ID.ValueString()
-	endpoint, err := readWithConsistency(ctx, "webhook endpoint", id, req.Private, resp.Private, func() (*components.WebhookEndpoint, error) {
-		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return result.WebhookEndpoint, nil
-	}, &resp.Diagnostics)
+	result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, data.ID.ValueString())
 	if err != nil {
-		if handleNotFoundRemove(ctx, err, "webhook endpoint", id, &resp.State) {
+		if handleNotFoundRemove(ctx, err, "webhook endpoint", data.ID.ValueString(), &resp.State) {
 			return
 		}
 		resp.Diagnostics.AddError(
 			"Error reading webhook endpoint",
-			fmt.Sprintf("Could not read webhook endpoint %s: %s", id, err),
+			fmt.Sprintf("Could not read webhook endpoint %s: %s", data.ID.ValueString(), err),
 		)
 		return
 	}
 
-	r.mapResponseToState(ctx, endpoint, &data, &resp.Diagnostics)
+	r.mapResponseToState(ctx, result.WebhookEndpoint, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -243,9 +253,26 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	r.mapResponseToState(ctx, updateResult.WebhookEndpoint, &data, &resp.Diagnostics)
+	// Eventual consistency poll (same pattern as Create).
+	webhookID := data.ID.ValueString()
+	writeTime := latestTimestamp(updateResult.WebhookEndpoint)
+	webhook, err := pollForConsistency(ctx, "webhook endpoint", webhookID, writeTime, func() (*components.WebhookEndpoint, error) {
+		result, err := r.client.Webhooks.GetWebhookEndpoint(ctx, webhookID)
+		if err != nil {
+			return nil, err
+		}
+		return result.WebhookEndpoint, nil
+	}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error reading webhook endpoint after update",
+			fmt.Sprintf("Could not read webhook endpoint %s: %s", webhookID, err),
+		)
+		return
+	}
+
+	r.mapResponseToState(ctx, webhook, &data, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	resp.Diagnostics.Append(setWriteTimestamp(ctx, latestTimestamp(updateResult.WebhookEndpoint), resp.Private)...)
 }
 
 // Delete performs a real DELETE (unlike meters/products which archive).
