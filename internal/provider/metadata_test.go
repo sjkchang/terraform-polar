@@ -220,4 +220,3 @@ resource "polar_product" "test" {
 		},
 	})
 }
-
