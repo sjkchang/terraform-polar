@@ -4,9 +4,13 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func strPtr(s string) *string       { return &s }
@@ -149,3 +153,71 @@ func TestSdkMetadataToMap_numberPrecision(t *testing.T) {
 		})
 	}
 }
+
+// --- Plan-phase validation unit tests (no API calls) ---
+
+func TestMetadataValidation_keyTooLong(t *testing.T) {
+	longKey := strings.Repeat("k", 41)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "polar_product" "test" {
+  name = "test"
+  prices = [{ amount_type = "free" }]
+  metadata = {
+    %q = "value"
+  }
+}
+`, longKey),
+				ExpectError: regexp.MustCompile(`Metadata key too long`),
+			},
+		},
+	})
+}
+
+func TestMetadataValidation_valueTooLong(t *testing.T) {
+	longValue := strings.Repeat("v", 501)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "polar_product" "test" {
+  name = "test"
+  prices = [{ amount_type = "free" }]
+  metadata = {
+    key = %q
+  }
+}
+`, longValue),
+				ExpectError: regexp.MustCompile(`Metadata value too long`),
+			},
+		},
+	})
+}
+
+func TestMetadataValidation_tooManyEntries(t *testing.T) {
+	var entries strings.Builder
+	for i := 0; i < 51; i++ {
+		fmt.Fprintf(&entries, "    key%d = \"val\"\n", i)
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "polar_product" "test" {
+  name = "test"
+  prices = [{ amount_type = "free" }]
+  metadata = {
+%s  }
+}
+`, entries.String()),
+				ExpectError: regexp.MustCompile(`Too many metadata entries`),
+			},
+		},
+	})
+}
+
