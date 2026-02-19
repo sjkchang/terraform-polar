@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -345,6 +346,7 @@ func getOrgSupplemental(ctx context.Context, serverURL, token, orgID string) (*o
 // doWithRetry executes fn with exponential backoff on 429 (rate limit) and 5xx
 // (server errors). If fn returns (nil, nil), it means the caller already consumed
 // and closed the response body on success (see getOrgSupplemental).
+// Respects Retry-After headers when present on 429 responses.
 func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 	const initialBackoff = 500 * time.Millisecond
 	const maxBackoff = 30 * time.Second
@@ -375,10 +377,7 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 
 		// Retry on 429 or 5xx if we haven't exceeded the max elapsed time.
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			backoff := time.Duration(float64(initialBackoff) * math.Pow(1.5, float64(attempt)))
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+			backoff := retryBackoff(resp, attempt, initialBackoff, maxBackoff)
 			if time.Since(start)+backoff <= maxElapsed {
 				tflog.Debug(ctx, "retrying supplemental HTTP request", map[string]interface{}{
 					"status":  resp.StatusCode,
@@ -402,7 +401,26 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 		})
 		return fmt.Errorf("supplemental HTTP request failed with status %d", resp.StatusCode)
 	}
-	return fmt.Errorf("max retry time (%s) exceeded", maxElapsed)
+}
+
+// retryBackoff computes the backoff duration for a retry. If the response
+// includes a Retry-After header (seconds), that value is used (capped at
+// maxBackoff). Otherwise, exponential backoff is applied.
+func retryBackoff(resp *http.Response, attempt int, initialBackoff, maxBackoff time.Duration) time.Duration {
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		if seconds, err := strconv.Atoi(ra); err == nil && seconds > 0 {
+			d := time.Duration(seconds) * time.Second
+			if d > maxBackoff {
+				d = maxBackoff
+			}
+			return d
+		}
+	}
+	backoff := time.Duration(float64(initialBackoff) * math.Pow(1.5, float64(attempt)))
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+	return backoff
 }
 
 // --- Helpers ---

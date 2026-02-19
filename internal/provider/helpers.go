@@ -48,6 +48,17 @@ func isNotFound(err error) bool {
 	return errors.As(err, &notFound)
 }
 
+// isTransient checks if an error is a transient API error (429 rate limit or
+// 5xx server error) that the SDK's built-in retry already exhausted. Polling
+// should keep trying rather than treating these as permanent failures.
+func isTransient(err error) bool {
+	var apiErr *apierrors.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == 429 || apiErr.StatusCode >= 500
+	}
+	return false
+}
+
 // extractProviderData extracts the *PolarProviderData from provider configuration.
 // Returns nil without error when providerData is nil (early provider lifecycle).
 func extractProviderData(providerData any, diags *diag.Diagnostics) *PolarProviderData {
@@ -109,10 +120,11 @@ func derefBool(b *bool) bool {
 }
 
 // pollForConsistency polls fetch until it returns a result whose timestamp is
-// at or after writeTimestamp. Retries on ResourceNotFound and stale-read
-// errors. If polling exhausts all attempts and at least one successful read
-// was obtained, the last result is returned with a warning diagnostic. If no
-// successful read was ever obtained (e.g. persistent 404), a hard error is returned.
+// at or after writeTimestamp. Retries on ResourceNotFound, transient errors
+// (429/5xx), and stale reads. If polling exhausts all attempts and at least
+// one successful read was obtained, the last result is returned with a warning
+// diagnostic. If no successful read was ever obtained (e.g. persistent 404),
+// a hard error is returned.
 func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id string, writeTimestamp time.Time, fetch func() (T, error), diags *diag.Diagnostics) (T, error) {
 	var last T
 	var hasResult bool
@@ -131,6 +143,10 @@ func pollForConsistency[T Timestamped](ctx context.Context, resourceType, id str
 		if err != nil {
 			if isNotFound(err) {
 				lastRejectReason = "resource not found"
+				continue
+			}
+			if isTransient(err) {
+				lastRejectReason = fmt.Sprintf("transient error: %s", err)
 				continue
 			}
 			var zero T
