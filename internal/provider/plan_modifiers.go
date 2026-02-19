@@ -15,20 +15,18 @@ import (
 //
 // The warning parameter should describe resource-specific implications of
 // the archive, for example what happens to existing subscribers.
-func requiresReplaceWithArchiveWarning(resourceName, warning string) planmodifier.String {
+func requiresReplaceWithArchiveWarning(warning string) planmodifier.String {
 	return &archiveReplaceModifier{
-		resourceName: resourceName,
-		warning:      warning,
+		warning: warning,
 	}
 }
 
 type archiveReplaceModifier struct {
-	resourceName string
-	warning      string
+	warning string
 }
 
 func (m *archiveReplaceModifier) Description(_ context.Context) string {
-	return fmt.Sprintf("If the value of this attribute changes, Terraform will archive the existing %s and create a new one.", m.resourceName)
+	return fmt.Sprintf("If the value of this attribute changes, Terraform will archive the existing %s and create a new one.", "product")
 }
 
 func (m *archiveReplaceModifier) MarkdownDescription(ctx context.Context) string {
@@ -51,7 +49,7 @@ func (m *archiveReplaceModifier) PlanModifyString(ctx context.Context, req planm
 
 	// Emit a warning about archive behavior.
 	resp.Diagnostics.AddWarning(
-		fmt.Sprintf("Changing this field will archive the existing %s", m.resourceName),
+		fmt.Sprintf("Changing this field will archive the existing %s", "product"),
 		fmt.Sprintf(
 			"Polar does not support changing this field on an existing %s. "+
 				"Terraform will archive the current %s and create a new one.\n\n"+
@@ -59,7 +57,7 @@ func (m *archiveReplaceModifier) PlanModifyString(ctx context.Context, req planm
 				"To keep it tracked, consider creating a new resource and setting is_archived = true on the "+
 				"old one instead.\n\n%s\n\n"+
 				"You can add lifecycle { prevent_destroy = true } to this resource to prevent accidental archival.",
-			m.resourceName, m.resourceName, m.resourceName, m.warning,
+			"product", "product", "product", m.warning,
 		),
 	)
 }

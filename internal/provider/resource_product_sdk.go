@@ -367,7 +367,7 @@ func optionalInt64Equal(a, b types.Int64) bool {
 
 // pricesToUpdateSDK builds the update price list. For each planned price:
 // 1. Try to find an existing API price with matching values → reuse its ID
-// 2. If no match → create a new price definition
+// 2. If no match → create a new price definition.
 func pricesToUpdateSDK(planned []PriceModel, currentPrices []components.Prices) ([]components.ProductUpdatePrices, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	existing := extractExistingPrices(currentPrices)

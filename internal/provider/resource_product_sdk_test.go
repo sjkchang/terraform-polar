@@ -8,8 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func typesStringValue(s string) types.String { return types.StringValue(s) }
-func typesStringNull() types.String          { return types.StringNull() }
+func typesStringNull() types.String { return types.StringNull() }
 
 func TestNumericStringsEqual(t *testing.T) {
 	tests := []struct {

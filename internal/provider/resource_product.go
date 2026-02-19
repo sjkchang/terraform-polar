@@ -102,8 +102,8 @@ func (r *ProductResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "The billing interval for recurring products. Must be one of: `month`, `year`, `week`, `day`. Omit for one-time products. Changing this forces a new resource (the existing product is archived, not deleted).",
 				Optional:            true,
 				PlanModifiers: []planmodifier.String{
-					requiresReplaceWithArchiveWarning("product",
-						"Existing subscribers will remain on the archived product and will NOT be automatically migrated to the new one. "+
+					requiresReplaceWithArchiveWarning(
+						"Existing subscribers will remain on the archived product and will NOT be automatically migrated to the new one. " +
 							"For subscription products, you may want to migrate subscribers before archiving."),
 				},
 				Validators: []validator.String{
@@ -306,21 +306,21 @@ func (r *ProductResource) ValidateConfig(ctx context.Context, req resource.Valid
 
 		// --- Logical constraints for custom prices ---
 		if amountType == "custom" && !price.MinimumAmount.IsNull() && !price.MaximumAmount.IsNull() && !price.PresetAmount.IsNull() {
-			min := price.MinimumAmount.ValueInt64()
-			max := price.MaximumAmount.ValueInt64()
+			minAmt := price.MinimumAmount.ValueInt64()
+			maxAmt := price.MaximumAmount.ValueInt64()
 			preset := price.PresetAmount.ValueInt64()
-			if min > max {
+			if minAmt > maxAmt {
 				resp.Diagnostics.AddAttributeError(
 					pricePath.AtName("minimum_amount"),
 					"Invalid price range",
-					fmt.Sprintf("minimum_amount (%d) must be less than or equal to maximum_amount (%d).", min, max),
+					fmt.Sprintf("minimum_amount (%d) must be less than or equal to maximum_amount (%d).", minAmt, maxAmt),
 				)
 			}
-			if preset < min || preset > max {
+			if preset < minAmt || preset > maxAmt {
 				resp.Diagnostics.AddAttributeError(
 					pricePath.AtName("preset_amount"),
 					"Invalid preset amount",
-					fmt.Sprintf("preset_amount (%d) must be between minimum_amount (%d) and maximum_amount (%d).", preset, min, max),
+					fmt.Sprintf("preset_amount (%d) must be between minimum_amount (%d) and maximum_amount (%d).", preset, minAmt, maxAmt),
 				)
 			}
 		}

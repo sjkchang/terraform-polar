@@ -243,7 +243,7 @@ func (r *MeterResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 // Read refreshes TF state from the API. Handles two "gone" cases:
 // - 404 Not Found → resource deleted out-of-band
-// - ArchivedAt set → resource was archived (our Delete archives, not deletes)
+// - ArchivedAt set → resource was archived (our Delete archives, not deletes).
 func (r *MeterResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data MeterResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)

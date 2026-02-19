@@ -306,7 +306,7 @@ func (r *WebhookEndpointResource) ImportState(ctx context.Context, req resource.
 }
 
 // mapResponseToState maps a WebhookEndpoint API response to the Terraform resource model.
-func (r *WebhookEndpointResource) mapResponseToState(ctx context.Context, endpoint *components.WebhookEndpoint, data *WebhookEndpointResourceModel, diags *diag.Diagnostics) {
+func (r *WebhookEndpointResource) mapResponseToState(_ context.Context, endpoint *components.WebhookEndpoint, data *WebhookEndpointResourceModel, diags *diag.Diagnostics) {
 	data.ID = types.StringValue(endpoint.ID)
 	data.URL = types.StringValue(endpoint.URL)
 	data.Format = types.StringValue(string(endpoint.Format))

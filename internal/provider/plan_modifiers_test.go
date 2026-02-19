@@ -23,7 +23,7 @@ func nullRaw() tftypes.Value {
 }
 
 func TestArchiveReplaceModifier_valueChanged(t *testing.T) {
-	modifier := requiresReplaceWithArchiveWarning("product", "Subscribers will remain on the archived product.")
+	modifier := requiresReplaceWithArchiveWarning("Subscribers will remain on the archived product.")
 
 	resp := &planmodifier.StringResponse{}
 	modifier.PlanModifyString(context.Background(), planmodifier.StringRequest{
@@ -46,7 +46,7 @@ func TestArchiveReplaceModifier_valueChanged(t *testing.T) {
 }
 
 func TestArchiveReplaceModifier_valueUnchanged(t *testing.T) {
-	modifier := requiresReplaceWithArchiveWarning("product", "Subscribers will remain on the archived product.")
+	modifier := requiresReplaceWithArchiveWarning("Subscribers will remain on the archived product.")
 
 	resp := &planmodifier.StringResponse{}
 	modifier.PlanModifyString(context.Background(), planmodifier.StringRequest{
@@ -65,7 +65,7 @@ func TestArchiveReplaceModifier_valueUnchanged(t *testing.T) {
 }
 
 func TestArchiveReplaceModifier_resourceCreation(t *testing.T) {
-	modifier := requiresReplaceWithArchiveWarning("product", "Subscribers will remain on the archived product.")
+	modifier := requiresReplaceWithArchiveWarning("Subscribers will remain on the archived product.")
 
 	resp := &planmodifier.StringResponse{}
 	modifier.PlanModifyString(context.Background(), planmodifier.StringRequest{
@@ -84,7 +84,7 @@ func TestArchiveReplaceModifier_resourceCreation(t *testing.T) {
 }
 
 func TestArchiveReplaceModifier_resourceDestruction(t *testing.T) {
-	modifier := requiresReplaceWithArchiveWarning("product", "Subscribers will remain on the archived product.")
+	modifier := requiresReplaceWithArchiveWarning("Subscribers will remain on the archived product.")
 
 	resp := &planmodifier.StringResponse{}
 	modifier.PlanModifyString(context.Background(), planmodifier.StringRequest{
