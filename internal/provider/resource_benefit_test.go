@@ -63,32 +63,18 @@ func TestAccBenefitResource_custom(t *testing.T) {
 					),
 				},
 			},
-			// Delete testing automatically occurs in TestCase
-		},
-	})
-}
-
-func TestAccBenefitResource_customNoNote(t *testing.T) {
-	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
+			// Update to empty custom_properties (no note)
 			{
-				Config: testAccBenefitCustomConfigNoNote(rName),
+				Config: testAccBenefitCustomConfigNoNote(rName + "-no-note"),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_benefit.test",
-						tfjsonpath.New("type"),
-						knownvalue.StringExact("custom"),
-					),
-					statecheck.ExpectKnownValue(
-						"polar_benefit.test",
 						tfjsonpath.New("description"),
-						knownvalue.StringExact(rName),
+						knownvalue.StringExact(rName+"-no-note"),
 					),
 				},
 			},
+			// Delete testing automatically occurs in TestCase
 		},
 	})
 }

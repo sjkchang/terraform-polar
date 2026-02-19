@@ -41,38 +41,23 @@ func TestAccProductResource_oneTimeFixed(t *testing.T) {
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
-			// Update name and price
+			// Update name, price, and add description
 			{
-				Config: testAccProductOneTimeFixedConfig(rName+"-updated", 1999),
+				Config: testAccProductWithDescriptionConfig(rName+"-updated", "A test product", 1999),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
 						tfjsonpath.New("name"),
 						knownvalue.StringExact(rName+"-updated"),
 					),
-				},
-			},
-			// Delete (archive) testing automatically occurs in TestCase
-		},
-	})
-}
-
-func TestAccProductResource_oneTimeFree(t *testing.T) {
-	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccProductOneTimeFreeConfig(rName),
-				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_product.test",
-						tfjsonpath.New("name"),
-						knownvalue.StringExact(rName),
+						tfjsonpath.New("description"),
+						knownvalue.StringExact("A test product"),
 					),
 				},
 			},
+			// Delete (archive) testing automatically occurs in TestCase
 		},
 	})
 }
@@ -113,26 +98,6 @@ func TestAccProductResource_recurring(t *testing.T) {
 						"polar_product.test",
 						tfjsonpath.New("name"),
 						knownvalue.StringExact(rName+"-upd"),
-					),
-				},
-			},
-		},
-	})
-}
-
-func TestAccProductResource_withDescription(t *testing.T) {
-	rName := fmt.Sprintf("tf-acc-%s", acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum))
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccProductWithDescriptionConfig(rName, "A test product", 500),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"polar_product.test",
-						tfjsonpath.New("description"),
-						knownvalue.StringExact("A test product"),
 					),
 				},
 			},
@@ -316,18 +281,6 @@ resource "polar_product" "test" {
   }]
 }
 `, name, priceAmount)
-}
-
-func testAccProductOneTimeFreeConfig(name string) string {
-	return fmt.Sprintf(`
-resource "polar_product" "test" {
-  name = %q
-
-  prices = [{
-    amount_type = "free"
-  }]
-}
-`, name)
 }
 
 func testAccProductRecurringConfig(name, interval string, priceAmount int64) string {

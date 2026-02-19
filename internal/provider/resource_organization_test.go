@@ -154,37 +154,13 @@ func TestAccOrganizationResource_subscriptionSettings(t *testing.T) {
 	})
 }
 
-func TestAccOrganizationResource_notificationSettings(t *testing.T) {
+func TestAccOrganizationResource_emailAndNotificationSettings(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccOrganizationNotificationSettings(true, false),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue(
-						"polar_organization.test",
-						tfjsonpath.New("notification_settings").AtMapKey("new_order"),
-						knownvalue.Bool(true),
-					),
-					statecheck.ExpectKnownValue(
-						"polar_organization.test",
-						tfjsonpath.New("notification_settings").AtMapKey("new_subscription"),
-						knownvalue.Bool(false),
-					),
-				},
-			},
-		},
-	})
-}
-
-func TestAccOrganizationResource_customerEmailSettings(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccOrganizationCustomerEmailSettings(),
+				Config: testAccOrganizationEmailAndNotificationSettings(),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue(
 						"polar_organization.test",
@@ -195,6 +171,16 @@ func TestAccOrganizationResource_customerEmailSettings(t *testing.T) {
 						"polar_organization.test",
 						tfjsonpath.New("customer_email_settings").AtMapKey("subscription_cancellation"),
 						knownvalue.Bool(true),
+					),
+					statecheck.ExpectKnownValue(
+						"polar_organization.test",
+						tfjsonpath.New("notification_settings").AtMapKey("new_order"),
+						knownvalue.Bool(true),
+					),
+					statecheck.ExpectKnownValue(
+						"polar_organization.test",
+						tfjsonpath.New("notification_settings").AtMapKey("new_subscription"),
+						knownvalue.Bool(false),
 					),
 				},
 			},
@@ -247,18 +233,7 @@ resource "polar_organization" "test" {
 `, prorationBehavior, gracePeriod)
 }
 
-func testAccOrganizationNotificationSettings(newOrder, newSubscription bool) string {
-	return fmt.Sprintf(`
-resource "polar_organization" "test" {
-  notification_settings = {
-    new_order        = %t
-    new_subscription = %t
-  }
-}
-`, newOrder, newSubscription)
-}
-
-func testAccOrganizationCustomerEmailSettings() string {
+func testAccOrganizationEmailAndNotificationSettings() string {
 	return `
 resource "polar_organization" "test" {
   customer_email_settings = {
@@ -271,6 +246,11 @@ resource "polar_organization" "test" {
     subscription_revoked          = true
     subscription_uncanceled       = true
     subscription_updated          = true
+  }
+
+  notification_settings = {
+    new_order        = true
+    new_subscription = false
   }
 }
 `
