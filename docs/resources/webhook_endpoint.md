@@ -39,7 +39,7 @@ resource "polar_webhook_endpoint" "discord" {
 
 - `events` (Set of String) The set of event types this endpoint subscribes to.
 - `format` (String) The format of webhook payloads. Must be `raw`, `discord`, or `slack`.
-- `url` (String) The URL where webhook events will be sent.
+- `url` (String) The URL where webhook events will be sent. Must use HTTPS.
 
 ### Optional
 

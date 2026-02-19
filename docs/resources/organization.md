@@ -41,6 +41,7 @@ Required:
 - `subscription_cancellation` (Boolean) Whether to send subscription cancellation emails.
 - `subscription_confirmation` (Boolean) Whether to send subscription confirmation emails.
 - `subscription_cycled` (Boolean) Whether to send subscription renewal emails.
+- `subscription_cycled_after_trial` (Boolean) Whether to send subscription renewal emails after a trial period ends.
 - `subscription_past_due` (Boolean) Whether to send subscription past-due emails.
 - `subscription_revoked` (Boolean) Whether to send subscription revoked emails.
 - `subscription_uncanceled` (Boolean) Whether to send subscription uncanceled emails.

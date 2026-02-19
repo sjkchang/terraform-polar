@@ -3,12 +3,12 @@
 page_title: "polar_benefit Data Source - polar"
 subcategory: ""
 description: |-
-  Fetches a Polar benefit by ID.
+  Looks up a Polar benefit by ID. Use this to reference an unmanaged benefit (e.g. created in the dashboard) from a managed product's benefit_ids.
 ---
 
 # polar_benefit (Data Source)
 
-Fetches a Polar benefit by ID.
+Looks up a Polar benefit by ID. Use this to reference an unmanaged benefit (e.g. created in the dashboard) from a managed product's `benefit_ids`.
 
 ## Example Usage
 
@@ -35,87 +35,5 @@ output "benefit_description" {
 
 ### Read-Only
 
-- `custom_properties` (Attributes) Properties for `custom` type benefits. (see [below for nested schema](#nestedatt--custom_properties))
 - `description` (String) The description of the benefit.
-- `discord_properties` (Attributes) Properties for `discord` type benefits. (see [below for nested schema](#nestedatt--discord_properties))
-- `downloadables_properties` (Attributes) Properties for `downloadables` type benefits. (see [below for nested schema](#nestedatt--downloadables_properties))
-- `github_repository_properties` (Attributes) Properties for `github_repository` type benefits. (see [below for nested schema](#nestedatt--github_repository_properties))
-- `license_keys_properties` (Attributes) Properties for `license_keys` type benefits. (see [below for nested schema](#nestedatt--license_keys_properties))
-- `metadata` (Map of String) Key-value metadata.
-- `meter_credit_properties` (Attributes) Properties for `meter_credit` type benefits. (see [below for nested schema](#nestedatt--meter_credit_properties))
-- `type` (String) The benefit type.
-
-<a id="nestedatt--custom_properties"></a>
-### Nested Schema for `custom_properties`
-
-Read-Only:
-
-- `note` (String) A note to display to the subscriber.
-
-
-<a id="nestedatt--discord_properties"></a>
-### Nested Schema for `discord_properties`
-
-Read-Only:
-
-- `guild_id` (String) The Discord server (guild) ID.
-- `guild_token` (String, Sensitive) The Discord bot token for the server.
-- `kick_member` (Boolean) Whether to kick the member when the benefit is revoked.
-- `role_id` (String) The Discord role ID to grant.
-
-
-<a id="nestedatt--downloadables_properties"></a>
-### Nested Schema for `downloadables_properties`
-
-Read-Only:
-
-- `files` (List of String) List of file IDs available for download.
-
-
-<a id="nestedatt--github_repository_properties"></a>
-### Nested Schema for `github_repository_properties`
-
-Read-Only:
-
-- `permission` (String) The permission level granted.
-- `repository_name` (String) The GitHub repository name.
-- `repository_owner` (String) The GitHub repository owner.
-
-
-<a id="nestedatt--license_keys_properties"></a>
-### Nested Schema for `license_keys_properties`
-
-Read-Only:
-
-- `activations` (Attributes) Activation settings for license keys. (see [below for nested schema](#nestedatt--license_keys_properties--activations))
-- `expires` (Attributes) Expiration settings for license keys. (see [below for nested schema](#nestedatt--license_keys_properties--expires))
-- `limit_usage` (Number) Maximum number of times a license key can be used.
-- `prefix` (String) A prefix for generated license keys.
-
-<a id="nestedatt--license_keys_properties--activations"></a>
-### Nested Schema for `license_keys_properties.activations`
-
-Read-Only:
-
-- `enable_customer_admin` (Boolean) Whether the customer can manage their own activations.
-- `limit` (Number) Maximum number of activations.
-
-
-<a id="nestedatt--license_keys_properties--expires"></a>
-### Nested Schema for `license_keys_properties.expires`
-
-Read-Only:
-
-- `timeframe` (String) The timeframe unit.
-- `ttl` (Number) Time-to-live value.
-
-
-
-<a id="nestedatt--meter_credit_properties"></a>
-### Nested Schema for `meter_credit_properties`
-
-Read-Only:
-
-- `meter_id` (String) The ID of the meter to credit.
-- `rollover` (Boolean) Whether unused credits roll over to the next period.
-- `units` (Number) The number of units to credit.
+- `type` (String) The benefit type (`custom`, `discord`, `github_repository`, `downloadables`, `license_keys`, `meter_credit`).

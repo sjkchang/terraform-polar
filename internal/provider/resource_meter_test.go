@@ -44,8 +44,8 @@ func TestAccMeterResource_count(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:     "polar_meter.test",
-				ImportState:      true,
+				ResourceName:      "polar_meter.test",
+				ImportState:       true,
 				ImportStateVerify: true,
 			},
 			// Update name

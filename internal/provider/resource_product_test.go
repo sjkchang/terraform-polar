@@ -37,7 +37,7 @@ func TestAccProductResource_oneTimeFixed(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:     "polar_product.test",
+				ResourceName:      "polar_product.test",
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
@@ -101,7 +101,7 @@ func TestAccProductResource_recurring(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:     "polar_product.test",
+				ResourceName:      "polar_product.test",
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
@@ -209,7 +209,7 @@ func TestAccProductResource_customPrice(t *testing.T) {
 			},
 			// ImportState
 			{
-				ResourceName:     "polar_product.test",
+				ResourceName:      "polar_product.test",
 				ImportState:       true,
 				ImportStateVerify: true,
 			},

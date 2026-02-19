@@ -27,4 +27,4 @@ provider "polar" {
 ### Optional
 
 - `access_token` (String, Sensitive) Polar organization access token. Can also be set with the `POLAR_ACCESS_TOKEN` environment variable.
-- `server` (String) The Polar environment to use. Must be `production` or `sandbox`. Defaults to `sandbox`.
+- `server` (String) The Polar environment to use. Must be `production` or `sandbox`. Can also be set with the `POLAR_SERVER` environment variable.

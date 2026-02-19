@@ -540,4 +540,3 @@ func sdkAggregationToModel(agg components.MeterAggregation, diags *diag.Diagnost
 	}
 	return model
 }
-

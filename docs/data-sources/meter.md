@@ -3,12 +3,12 @@
 page_title: "polar_meter Data Source - polar"
 subcategory: ""
 description: |-
-  Fetches a Polar meter by ID.
+  Looks up a Polar meter by ID. Use this to reference an unmanaged meter from a metered-unit price or meter-credit benefit.
 ---
 
 # polar_meter (Data Source)
 
-Fetches a Polar meter by ID.
+Looks up a Polar meter by ID. Use this to reference an unmanaged meter from a metered-unit price or meter-credit benefit.
 
 ## Example Usage
 
@@ -27,33 +27,4 @@ data "polar_meter" "example" {
 
 ### Read-Only
 
-- `aggregation` (Attributes) Aggregation function for the meter. (see [below for nested schema](#nestedatt--aggregation))
-- `filter` (Attributes) Filter applied on incoming events. (see [below for nested schema](#nestedatt--filter))
-- `metadata` (Map of String) Key-value metadata.
 - `name` (String) The name of the meter.
-
-<a id="nestedatt--aggregation"></a>
-### Nested Schema for `aggregation`
-
-Read-Only:
-
-- `func` (String) The aggregation function.
-- `property` (String) The event property to aggregate.
-
-
-<a id="nestedatt--filter"></a>
-### Nested Schema for `filter`
-
-Read-Only:
-
-- `clauses` (Attributes List) List of filter clauses. (see [below for nested schema](#nestedatt--filter--clauses))
-- `conjunction` (String) Logical conjunction for combining clauses.
-
-<a id="nestedatt--filter--clauses"></a>
-### Nested Schema for `filter.clauses`
-
-Read-Only:
-
-- `operator` (String) The comparison operator.
-- `property` (String) The event property to filter on.
-- `value` (String) The value to compare against.

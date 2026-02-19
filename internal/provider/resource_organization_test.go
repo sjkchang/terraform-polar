@@ -37,8 +37,8 @@ func TestAccOrganizationResource_basic(t *testing.T) {
 			// ImportState
 			{
 				ResourceName:      "polar_organization.test",
-				ImportState:        true,
-				ImportStateVerify:  true,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -275,4 +275,3 @@ resource "polar_organization" "test" {
 }
 `
 }
-
