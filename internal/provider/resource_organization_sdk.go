@@ -346,10 +346,12 @@ func getOrgSupplemental(ctx context.Context, serverURL, token, orgID string) (*o
 // (server errors). If fn returns (nil, nil), it means the caller already consumed
 // and closed the response body on success (see getOrgSupplemental).
 func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
-	const maxAttempts = 5
 	const initialBackoff = 500 * time.Millisecond
+	const maxBackoff = 30 * time.Second
+	const maxElapsed = 120 * time.Second
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	start := time.Now()
+	for attempt := 0; ; attempt++ {
 		resp, err := fn()
 		if err != nil {
 			return err
@@ -371,10 +373,13 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 			respBody = []byte("(failed to read response body)")
 		}
 
-		// Retry on 429 or 5xx
+		// Retry on 429 or 5xx if we haven't exceeded the max elapsed time.
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			if attempt < maxAttempts-1 {
-				backoff := time.Duration(float64(initialBackoff) * math.Pow(1.5, float64(attempt)))
+			backoff := time.Duration(float64(initialBackoff) * math.Pow(1.5, float64(attempt)))
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			if time.Since(start)+backoff <= maxElapsed {
 				tflog.Debug(ctx, "retrying supplemental HTTP request", map[string]interface{}{
 					"status":  resp.StatusCode,
 					"attempt": attempt + 1,
@@ -397,7 +402,7 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 		})
 		return fmt.Errorf("supplemental HTTP request failed with status %d", resp.StatusCode)
 	}
-	return fmt.Errorf("max retries exceeded")
+	return fmt.Errorf("max retry time (%s) exceeded", maxElapsed)
 }
 
 // --- Helpers ---
