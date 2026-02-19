@@ -179,14 +179,18 @@ func mapProductResponseToState(ctx context.Context, product *components.Product,
 		data.BenefitIDs = benefitSet
 	}
 
-	// Map medias (always non-null so Optional+Computed doesn't oscillate)
-	mediaIDs := make([]string, len(product.Medias))
-	for i, m := range product.Medias {
-		mediaIDs[i] = m.ID
+	// Map medias — only if the user opted into TF-managed medias (non-null).
+	// Same pattern as benefit_ids: if omitted from config, leave null to avoid
+	// oscillation between null and [] on every plan.
+	if !data.Medias.IsNull() {
+		mediaIDs := make([]string, len(product.Medias))
+		for i, m := range product.Medias {
+			mediaIDs[i] = m.ID
+		}
+		mediaList, d := types.ListValueFrom(ctx, types.StringType, mediaIDs)
+		diags.Append(d...)
+		data.Medias = mediaList
 	}
-	mediaList, d := types.ListValueFrom(ctx, types.StringType, mediaIDs)
-	diags.Append(d...)
-	data.Medias = mediaList
 }
 
 // --- Price conversion helpers ---

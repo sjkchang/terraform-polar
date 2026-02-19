@@ -368,7 +368,7 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 		respBody, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			respBody = []byte(fmt.Sprintf("(failed to read response body: %s)", readErr))
+			respBody = []byte("(failed to read response body)")
 		}
 
 		// Retry on 429 or 5xx
@@ -389,7 +389,13 @@ func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) error {
 			}
 		}
 
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		// Log full response body at debug level; return only status in user-facing error
+		// to avoid leaking internal API details.
+		tflog.Debug(ctx, "supplemental HTTP error response", map[string]interface{}{
+			"status": resp.StatusCode,
+			"body":   string(respBody),
+		})
+		return fmt.Errorf("supplemental HTTP request failed with status %d", resp.StatusCode)
 	}
 	return fmt.Errorf("max retries exceeded")
 }

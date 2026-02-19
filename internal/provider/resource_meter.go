@@ -24,6 +24,7 @@ import (
 // Compile-time interface conformance checks.
 var _ resource.Resource = &MeterResource{}
 var _ resource.ResourceWithImportState = &MeterResource{}
+var _ resource.ResourceWithValidateConfig = &MeterResource{}
 
 func NewMeterResource() resource.Resource {
 	return &MeterResource{}
@@ -142,6 +143,36 @@ func (r *MeterResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				ElementType:         types.StringType,
 			},
 		},
+	}
+}
+
+func (r *MeterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data MeterResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if data.Aggregation == nil || data.Aggregation.Func.IsUnknown() {
+		return
+	}
+
+	aggFunc := data.Aggregation.Func.ValueString()
+	hasProperty := !data.Aggregation.Property.IsNull() && !data.Aggregation.Property.IsUnknown()
+
+	if aggFunc == "count" && hasProperty {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("aggregation").AtName("property"),
+			"Unexpected field",
+			"property must not be set when aggregation func is \"count\". Count aggregation counts all matched events.",
+		)
+	}
+	if aggFunc != "count" && !hasProperty {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("aggregation").AtName("property"),
+			"Missing required field",
+			fmt.Sprintf("property is required when aggregation func is %q.", aggFunc),
+		)
 	}
 }
 

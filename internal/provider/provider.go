@@ -43,7 +43,6 @@ type PolarProviderData struct {
 	// Singleton guard: only one polar_organization resource per provider.
 	orgOnce sync.Once
 	orgID   string
-	orgErr  error
 }
 
 // ClaimOrganization enforces that at most one polar_organization resource

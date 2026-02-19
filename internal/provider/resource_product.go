@@ -23,6 +23,7 @@ import (
 // Compile-time interface conformance checks.
 var _ resource.Resource = &ProductResource{}
 var _ resource.ResourceWithImportState = &ProductResource{}
+var _ resource.ResourceWithValidateConfig = &ProductResource{}
 
 func NewProductResource() resource.Resource {
 	return &ProductResource{}
@@ -187,6 +188,142 @@ func (r *ProductResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Default:             booldefault.StaticBool(false),
 			},
 		},
+	}
+}
+
+func (r *ProductResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data ProductResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	for i, price := range data.Prices {
+		if price.AmountType.IsUnknown() {
+			continue
+		}
+		pricePath := path.Root("prices").AtListIndex(i)
+		amountType := price.AmountType.ValueString()
+
+		// --- Required fields per type ---
+		switch amountType {
+		case "fixed":
+			if price.PriceAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("price_amount"),
+					"Missing required field",
+					"price_amount is required when amount_type is \"fixed\".",
+				)
+			}
+		case "custom":
+			if price.MinimumAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("minimum_amount"),
+					"Missing required field",
+					"minimum_amount is required when amount_type is \"custom\".",
+				)
+			}
+			if price.MaximumAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("maximum_amount"),
+					"Missing required field",
+					"maximum_amount is required when amount_type is \"custom\".",
+				)
+			}
+			if price.PresetAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("preset_amount"),
+					"Missing required field",
+					"preset_amount is required when amount_type is \"custom\".",
+				)
+			}
+		case "metered_unit":
+			if price.MeterID.IsNull() && !price.MeterID.IsUnknown() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("meter_id"),
+					"Missing required field",
+					"meter_id is required when amount_type is \"metered_unit\".",
+				)
+			}
+			if price.UnitAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("unit_amount"),
+					"Missing required field",
+					"unit_amount is required when amount_type is \"metered_unit\".",
+				)
+			}
+		}
+
+		// --- Conflicting fields: reject fields that don't belong to this type ---
+		if amountType != "fixed" && !price.PriceAmount.IsNull() {
+			resp.Diagnostics.AddAttributeError(
+				pricePath.AtName("price_amount"),
+				"Unexpected field",
+				fmt.Sprintf("price_amount is not used when amount_type is %q.", amountType),
+			)
+		}
+		if amountType != "custom" {
+			for _, f := range []struct {
+				val  types.Int64
+				name string
+			}{
+				{price.MinimumAmount, "minimum_amount"},
+				{price.MaximumAmount, "maximum_amount"},
+				{price.PresetAmount, "preset_amount"},
+			} {
+				if !f.val.IsNull() {
+					resp.Diagnostics.AddAttributeError(
+						pricePath.AtName(f.name),
+						"Unexpected field",
+						fmt.Sprintf("%s is not used when amount_type is %q.", f.name, amountType),
+					)
+				}
+			}
+		}
+		if amountType != "metered_unit" {
+			if !price.MeterID.IsNull() && !price.MeterID.IsUnknown() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("meter_id"),
+					"Unexpected field",
+					fmt.Sprintf("meter_id is not used when amount_type is %q.", amountType),
+				)
+			}
+			if !price.UnitAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("unit_amount"),
+					"Unexpected field",
+					fmt.Sprintf("unit_amount is not used when amount_type is %q.", amountType),
+				)
+			}
+			if !price.CapAmount.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("cap_amount"),
+					"Unexpected field",
+					fmt.Sprintf("cap_amount is not used when amount_type is %q.", amountType),
+				)
+			}
+		}
+
+		// --- Logical constraints for custom prices ---
+		if amountType == "custom" && !price.MinimumAmount.IsNull() && !price.MaximumAmount.IsNull() && !price.PresetAmount.IsNull() {
+			min := price.MinimumAmount.ValueInt64()
+			max := price.MaximumAmount.ValueInt64()
+			preset := price.PresetAmount.ValueInt64()
+			if min > max {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("minimum_amount"),
+					"Invalid price range",
+					fmt.Sprintf("minimum_amount (%d) must be less than or equal to maximum_amount (%d).", min, max),
+				)
+			}
+			if preset < min || preset > max {
+				resp.Diagnostics.AddAttributeError(
+					pricePath.AtName("preset_amount"),
+					"Invalid preset amount",
+					fmt.Sprintf("preset_amount (%d) must be between minimum_amount (%d) and maximum_amount (%d).", preset, min, max),
+				)
+			}
+		}
 	}
 }
 
