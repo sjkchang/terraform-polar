@@ -153,6 +153,8 @@ func (r *MeterResource) ValidateConfig(ctx context.Context, req resource.Validat
 		return
 	}
 
+	validateMetadata(ctx, data.Metadata, &resp.Diagnostics)
+
 	if data.Aggregation == nil || data.Aggregation.Func.IsUnknown() {
 		return
 	}

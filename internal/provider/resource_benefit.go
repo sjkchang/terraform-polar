@@ -296,6 +296,8 @@ func (r *BenefitResource) ValidateConfig(ctx context.Context, req resource.Valid
 		return
 	}
 
+	validateMetadata(ctx, data.Metadata, &resp.Diagnostics)
+
 	// type may be unknown during plan with variables — skip validation.
 	if data.Type.IsUnknown() {
 		return

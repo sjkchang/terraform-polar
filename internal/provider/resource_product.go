@@ -198,6 +198,8 @@ func (r *ProductResource) ValidateConfig(ctx context.Context, req resource.Valid
 		return
 	}
 
+	validateMetadata(ctx, data.Metadata, &resp.Diagnostics)
+
 	for i, price := range data.Prices {
 		if price.AmountType.IsUnknown() {
 			continue

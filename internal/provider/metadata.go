@@ -4,9 +4,11 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -65,4 +67,48 @@ func sdkMetadataToMap[T any](ctx context.Context, metadata map[string]T, extract
 	result, d := types.MapValueFrom(ctx, types.StringType, stringMap)
 	diags.Append(d...)
 	return result
+}
+
+// validateMetadata checks plan-phase constraints for metadata fields:
+//   - Max 50 key-value pairs
+//   - Key length ≤ 40 characters
+//   - Value length ≤ 500 characters
+func validateMetadata(ctx context.Context, metadata types.Map, diags *diag.Diagnostics) {
+	if metadata.IsNull() || metadata.IsUnknown() {
+		return
+	}
+
+	var stringMap map[string]string
+	d := metadata.ElementsAs(ctx, &stringMap, false)
+	diags.Append(d...)
+	if d.HasError() {
+		return
+	}
+
+	metaPath := path.Root("metadata")
+
+	if len(stringMap) > 50 {
+		diags.AddAttributeError(
+			metaPath,
+			"Too many metadata entries",
+			fmt.Sprintf("Metadata supports a maximum of 50 key-value pairs, got %d.", len(stringMap)),
+		)
+	}
+
+	for k, v := range stringMap {
+		if len(k) > 40 {
+			diags.AddAttributeError(
+				metaPath.AtMapKey(k),
+				"Metadata key too long",
+				fmt.Sprintf("Metadata key %q has %d characters, maximum allowed is 40.", k, len(k)),
+			)
+		}
+		if len(v) > 500 {
+			diags.AddAttributeError(
+				metaPath.AtMapKey(k),
+				"Metadata value too long",
+				fmt.Sprintf("Metadata value for key %q has %d characters, maximum allowed is 500.", k, len(v)),
+			)
+		}
+	}
 }
