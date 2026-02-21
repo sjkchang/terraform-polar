@@ -1,11 +1,11 @@
 # Terraform Provider for Polar
 
-The Polar provider enables [Terraform](https://www.terraform.io) to manage [Polar.sh](https://polar.sh) resources such as products, meters, benefits, and webhook endpoints.
+The Polar provider enables [Terraform](https://www.terraform.io) to manage [Polar.sh](https://polar.sh) resources such as organizations, products, meters, benefits, and webhook endpoints.
 
 ## Requirements
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
-- [Go](https://golang.org/doc/install) >= 1.24 (to build the provider)
+- [Go](https://golang.org/doc/install) >= 1.25 (to build the provider)
 
 ## Installation
 
@@ -31,13 +31,14 @@ provider "polar" {
   # Reads from POLAR_ACCESS_TOKEN env var by default
   # access_token = "polar_oat_xxx"
 
-  # Defaults to sandbox. Set to "production" for live environment.
+  # Required: must be "production" or "sandbox".
   # server = "production"
 }
 ```
 
 ## Resources
 
+- **polar_organization** — Adopt and configure organization settings (profile, subscriptions, notifications, feature flags)
 - **polar_product** — Manage products with fixed, free, custom, and metered pricing
 - **polar_meter** — Track usage events with configurable filters and aggregations
 - **polar_benefit** — Define benefits like custom perks, license keys, meter credits, Discord roles, GitHub repo access, and downloadables
@@ -45,7 +46,6 @@ provider "polar" {
 
 ## Data Sources
 
-- **polar_product** — Fetch an existing product by ID
 - **polar_meter** — Fetch an existing meter by ID
 - **polar_benefit** — Fetch an existing benefit by ID
 
